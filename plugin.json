@@ -1,0 +1,30 @@
+{
+    "id": "melodyctl",
+    "name": "Enco Buds Battery & Controls",
+    "description": "Left / Right / Case battery plus game mode and touch-gesture controls for OPPO Enco Buds (drives the melodyctl CLI over OPOv1/RFCOMM).",
+    "category": "utilities",
+    "version": "1.0.0",
+    "author": "chirag",
+    "icon": "headset",
+    "type": "widget",
+    "component": "./MelodyctlWidget.qml",
+    "settings": "./MelodyctlSettings.qml",
+    "capabilities": [
+        "dankbar-widget",
+        "control-center"
+    ],
+    "compositors": [
+        "any"
+    ],
+    "distro": [
+        "any"
+    ],
+    "dependencies": [
+        "python3"
+    ],
+    "permissions": [
+        "process",
+        "settings_read",
+        "settings_write"
+    ]
+}
