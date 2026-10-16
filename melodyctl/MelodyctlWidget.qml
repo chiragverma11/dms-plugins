@@ -60,6 +60,7 @@ PluginComponent {
         '  printf "MISSING_OVERRIDE"; exit 0',
         'fi',
         'if command -v melodyctl >/dev/null 2>&1; then printf "%s" "$(command -v melodyctl)"; exit 0; fi',
+        'if [ -x "$HOME/.local/bin/melodyctl" ]; then printf "%s" "$HOME/.local/bin/melodyctl"; exit 0; fi',
         'if [ -f "$2" ]; then printf "%s" "$2"; exit 0; fi',
         'printf "NONE"'
     ].join("\n")

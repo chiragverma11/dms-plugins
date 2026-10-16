@@ -27,6 +27,7 @@ PluginSettings {
         testProcess.command = ["sh", "-c",
             'if [ -n "$1" ]; then T="$1"; ' +
             'elif command -v melodyctl >/dev/null 2>&1; then T="melodyctl"; ' +
+            'elif [ -x "$HOME/.local/bin/melodyctl" ]; then T="$HOME/.local/bin/melodyctl"; ' +
             'else T=""; fi; ' +
             'if [ -z "$T" ]; then echo "NOT_FOUND"; exit 1; fi; ' +
             'if command -v "$T" >/dev/null 2>&1; then "$T" --version; exit $?; fi; ' +
