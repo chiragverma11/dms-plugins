@@ -31,6 +31,13 @@ Then add the widget to a bar via DMS layout settings (`rightWidgets`, etc.).
   buds are unreachable. Click it for the popout (Left / Right / Case battery +
   controls); **right-click** it to toggle compact ⇄ **full** (icon + `L·R·C`), or
   set *Show battery numbers* in the plugin settings.
+- The popout shows each bud's battery, a game-mode switch and the touch-gesture
+  list. Gestures are **editable in place**: tap a row to see what that bud's
+  button can do and pick a different function, which is written to the buds
+  straight away (per ear). The body **scrolls** when it is taller than the
+  screen, e.g. with a gesture row expanded.
+- Buttons and the gesture toggle are muted while the buds are unreachable, and
+  the battery gauges show `–` rather than a stale percentage once the link drops.
 - Failures surface as a short message (e.g. *Earbuds busy*, *Earbuds
   unreachable*) with the raw CLI output kept in a selectable **Details** box -
   never a raw traceback. The CLI reports structured errors under `--json`
