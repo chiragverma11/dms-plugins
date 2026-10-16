@@ -68,6 +68,65 @@ PluginComponent {
         root.errorTransient = false;
     }
 
+    // --- serialized CLI runner (one RFCOMM connection at a time) -------------
+    // The buds accept a single RFCOMM connection, so every melodyctl call goes
+    // through one queue rather than racing separate Process objects (which is
+    // what produced spurious "Device or resource busy").
+    property var cliQueue: []
+    property bool cliBusy: false
+    property var cliCurrent: null
+    property string cliOut: ""
+    property string cliErr: ""
+
+    function runCli(args, onDone) {
+        if (!root.cliAvailable) {
+            root.ensureCli();
+            return;
+        }
+        const key = args.join(" ");
+        if (root.cliCurrent && root.cliCurrent.key === key)
+            return;                                   // same request already running
+        for (let i = 0; i < root.cliQueue.length; ++i)
+            if (root.cliQueue[i].key === key)
+                return;                               // same request already queued
+        root.cliQueue = root.cliQueue.concat([{ args: args, key: key, onDone: onDone }]);
+        root.pumpCli();
+    }
+
+    function pumpCli() {
+        if (root.cliBusy || root.cliQueue.length === 0)
+            return;
+        const req = root.cliQueue[0];
+        root.cliQueue = root.cliQueue.slice(1);
+        root.cliBusy = true;
+        root.cliCurrent = req;
+        root.cliOut = "";
+        root.cliErr = "";
+        cliProcess.command = root.cliArgs(req.args);
+        cliProcess.running = true;
+    }
+
+    // --- freshness ------------------------------------------------------------
+    property bool batteryRefreshing: false
+    property real batteryUpdatedAt: 0
+    property bool popoutVisible: false
+    property real nowTick: Date.now()
+
+    readonly property string freshnessText: {
+        if (!root.cliAvailable)
+            return "";
+        if (root.batteryRefreshing)
+            return "Refreshing…";
+        if (root.batteryUpdatedAt <= 0)
+            return "";
+        const secs = Math.round((root.nowTick - root.batteryUpdatedAt) / 1000);
+        if (secs < 5)
+            return "Updated just now";
+        if (secs < 60)
+            return "Updated " + secs + "s ago";
+        return "Updated " + Math.floor(secs / 60) + "m ago";
+    }
+
     property var gestureRows: []
     property string gameMode: "unknown"
 
@@ -138,10 +197,10 @@ PluginComponent {
     }
 
     function checkVersion() {
-        if (versionProcess.running)
-            return;
-        versionProcess.command = root.cliArgs(["--version"]);
-        versionProcess.running = true;
+        root.runCli(["--version"], res => {
+            if (res.code === 0 && res.out !== "")
+                root.cliVersion = res.out.replace("melodyctl ", "");
+        });
     }
 
     function levelText(value) {
@@ -179,6 +238,14 @@ PluginComponent {
         onTriggered: root.refresh()
     }
 
+    // Tick the "updated Xs ago" label, but only while the popout is open.
+    Timer {
+        interval: 1000
+        repeat: true
+        running: root.popoutVisible
+        onTriggered: root.nowTick = Date.now()
+    }
+
     Process {
         id: resolveProcess
 
@@ -187,72 +254,23 @@ PluginComponent {
         }
     }
 
+    // Single worker for all CLI calls; requests run one at a time (see runCli).
     Process {
-        id: versionProcess
+        id: cliProcess
 
         stdout: StdioCollector {
-            onStreamFinished: root.cliVersion = text.trim().replace("melodyctl ", "")
-        }
-        stderr: StdioCollector {}
-    }
-
-    Process {
-        id: batteryProcess
-
-        stdout: StdioCollector {
-            onStreamFinished: {
-                try {
-                    const data = JSON.parse(text.trim());
-                    root.leftLevel = data.left ?? -1;
-                    root.rightLevel = data.right ?? -1;
-                    root.caseLevel = data.case ?? -1;
-                    root.connected = true;
-                    root.clearError();
-                } catch (e) {
-                    root.connected = false;
-                }
-            }
-        }
-
-        stderr: StdioCollector {
-            onStreamFinished: {
-                if (text.trim() !== "")
-                    root.setError(text);
-            }
-        }
-    }
-
-    Process {
-        id: gestureProcess
-
-        stdout: StdioCollector {
-            onStreamFinished: {
-                try {
-                    root.gestureRows = JSON.parse(text.trim());
-                } catch (e) {
-                    root.gestureRows = [];
-                }
-            }
-        }
-    }
-
-    Process {
-        id: controlProcess
-
-        stdout: StdioCollector {
-            onStreamFinished: {
-                const out = text.trim();
-                if (out !== "") {
-                    root.status = out;
-                    root.clearError();
-                }
-            }
+            onStreamFinished: root.cliOut = text
         }
         stderr: StdioCollector {
-            onStreamFinished: {
-                if (text.trim() !== "")
-                    root.setError(text);
-            }
+            onStreamFinished: root.cliErr = text
+        }
+        onExited: code => {
+            const req = root.cliCurrent;
+            root.cliBusy = false;
+            root.cliCurrent = null;
+            if (req && req.onDone)
+                req.onDone({ code: code, out: root.cliOut.trim(), err: root.cliErr.trim() });
+            root.pumpCli();
         }
     }
 
@@ -261,28 +279,54 @@ PluginComponent {
             root.ensureCli();
             return;
         }
-        if (batteryProcess.running)
-            return;
-        batteryProcess.command = root.cliArgs(["battery", "--json"]);
-        batteryProcess.running = true;
+        root.batteryRefreshing = true;
+        root.runCli(["battery", "--json"], res => {
+            root.batteryRefreshing = false;
+            if (res.code === 0 && res.out !== "") {
+                try {
+                    const data = JSON.parse(res.out);
+                    root.leftLevel = data.left ?? -1;
+                    root.rightLevel = data.right ?? -1;
+                    root.caseLevel = data.case ?? -1;
+                    root.connected = true;
+                    root.batteryUpdatedAt = Date.now();
+                    root.clearError();
+                } catch (e) {
+                    root.connected = false;
+                }
+            } else {
+                root.connected = false;
+                if (res.err !== "")
+                    root.setError(res.err);
+            }
+        });
     }
 
     function loadGestures() {
-        if (!root.cliAvailable)
-            return;
-        if (gestureProcess.running)
-            return;
-        gestureProcess.command = root.cliArgs(["gestures", "--json"]);
-        gestureProcess.running = true;
+        root.runCli(["gestures", "--json"], res => {
+            if (res.code === 0 && res.out !== "") {
+                try {
+                    root.gestureRows = JSON.parse(res.out);
+                } catch (e) {
+                    root.gestureRows = [];
+                }
+            }
+        });
     }
 
     function runControl(args) {
-        if (!root.cliAvailable)
-            return;
-        if (controlProcess.running)
-            return;
-        controlProcess.command = root.cliArgs(args);
-        controlProcess.running = true;
+        root.runCli(args, res => {
+            const out = (res.out || "").trim();
+            if (out !== "")
+                root.status = out;
+            if (res.code === 0) {
+                root.clearError();
+                if (args[0] === "gesture-set")
+                    root.loadGestures();   // the gesture table changed
+            } else if (res.err !== "") {
+                root.setError(res.err);
+            }
+        });
     }
 
     component BatteryRow: StyledRect {
@@ -389,6 +433,20 @@ PluginComponent {
             detailsText: root.statusLine
             showCloseButton: true
 
+            // Refresh whenever the popout opens, so it never shows stale data.
+            readonly property bool popoutNow: parentPopout ? parentPopout.shouldBeVisible : false
+
+            onPopoutNowChanged: {
+                root.popoutVisible = popoutNow;
+                if (popoutNow) {
+                    root.nowTick = Date.now();
+                    root.refresh();
+                    root.loadGestures();
+                }
+            }
+
+            Component.onCompleted: root.popoutVisible = popoutNow
+
             Column {
                 width: parent.width
                 spacing: Theme.spacingS
@@ -460,6 +518,14 @@ PluginComponent {
                 BatteryRow {
                     label: "Case"
                     value: root.caseLevel
+                }
+
+                StyledText {
+                    width: parent.width
+                    visible: root.cliAvailable && root.freshnessText !== ""
+                    text: root.freshnessText
+                    font.pixelSize: Theme.fontSizeSmall - 1
+                    color: Theme.surfaceVariantText
                 }
 
                 StyledText {
