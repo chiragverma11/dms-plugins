@@ -249,52 +249,92 @@ PluginComponent {
     readonly property var leftGestures: root.gestureRows.filter(r => r.ear === "left" && r.action >= 1 && r.action <= 4)
     readonly property var rightGestures: root.gestureRows.filter(r => r.ear === "right" && r.action >= 1 && r.action <= 4)
 
-    // Triple-tap is the one gesture surfaced as a quick control (it maps to the
-    // "both earbuds" gesture id 4 when written).
-    readonly property var tripleRow: root.gestureRows.find(r => r.ear === "left" && r.button === 1 && r.action === 3)
-    readonly property int tripleActionIndex: {
-        if (!root.tripleRow)
-            return -1;
-        if (root.tripleRow.function === 3)
-            return 0;   // voice assistant
-        if (root.tripleRow.function === 17)
-            return 1;   // game mode
-        return -1;
-    }
-
+    // Triple-tap used to be surfaced as a "both earbuds" shortcut, but the
+    // gesture list below is now editable per ear, so that shortcut was removed
+    // to avoid two sources of truth.
     readonly property int gameModeIndex: root.gameModeLastSent === "on" ? 0
         : (root.gameModeLastSent === "off" ? 1 : -1)
 
-    // Map a gesture function name to a Material Symbols glyph.
-    function functionIcon(name) {
-        switch (name) {
-        case "play/pause":
-            return "play_arrow";
-        case "previous song":
-        case "previous (OnePlus only)":
-            return "skip_previous";
-        case "next song":
-            return "skip_next";
-        case "voice assistant":
-            return "mic";
-        case "game mode":
-            return "sports_esports";
-        case "volume up":
-            return "volume_up";
-        case "volume down":
-            return "volume_down";
-        case "none":
+    // Map a gesture function id to a Material Symbols glyph / label. Ids come
+    // from the device tables (0 none, 1 play/pause, 3 assistant, 5 prev,
+    // 6 next, 11 vol+, 12 vol-, 17 game mode).
+    function functionIcon(id) {
+        switch (id) {
+        case 0:
             return "block";
+        case 1:
+            return "play_arrow";
+        case 3:
+            return "mic";
+        case 5:
+            return "skip_previous";
+        case 6:
+            return "skip_next";
+        case 11:
+            return "volume_up";
+        case 12:
+            return "volume_down";
+        case 17:
+            return "sports_esports";
         default:
             return "graph_2";
         }
     }
 
-    // "previous song" -> "Previous song"
-    function functionLabel(name) {
-        if (!name || name.length === 0)
-            return "—";
-        return name.charAt(0).toUpperCase() + name.slice(1);
+    function functionLabel(id) {
+        switch (id) {
+        case 0:
+            return "None";
+        case 1:
+            return "Play/pause";
+        case 3:
+            return "Voice assistant";
+        case 5:
+            return "Previous song";
+        case 6:
+            return "Next song";
+        case 11:
+            return "Volume up";
+        case 12:
+            return "Volume down";
+        case 17:
+            return "Game mode";
+        default:
+            return "Function " + id;
+        }
+    }
+
+    // Functions the ETI81 whitelist allows for each tap action (single/double/
+    // triple/long). Kept in sync with ACTION_FUNCTIONS in the CLI.
+    readonly property var gestureActionFunctions: ({
+        "1": [0, 1],
+        "2": [0, 1, 5, 6],
+        "3": [0, 3, 17],
+        "4": [0, 11, 12]
+    })
+
+    function gestureOptions(action) {
+        return root.gestureActionFunctions[String(action)] || [];
+    }
+
+    // Only one gesture row may be expanded at a time ("ear:action").
+    property string expandedGesture: ""
+
+    function toggleGestureEditor(key) {
+        root.expandedGesture = root.expandedGesture === key ? "" : key;
+    }
+
+    function setGestureFor(row, fn) {
+        if (!row)
+            return;
+        root.runControl(["gesture-set", String(row.ear), String(row.button), String(row.action), String(fn)],
+                        row.action_name + " → " + root.functionLabel(fn));
+        root.expandedGesture = "";
+    }
+
+    onConnectedChanged: {
+        if (!root.connected)
+            root.expandedGesture = "";
     }
 
     Component.onCompleted: root.resolveCli()
@@ -424,11 +464,13 @@ PluginComponent {
         });
     }
 
-    function runControl(args) {
+    // `ack` optionally overrides the acknowledgement shown in the header line.
+    function runControl(args, ack) {
         root.runCli(args, res => {
             const out = (res.out || "").trim();
-            if (out !== "") {
-                root.status = out;
+            const message = ack !== undefined ? ack : out;
+            if (message !== "") {
+                root.status = message;
                 statusResetTimer.restart();
             }
             if (res.code === 0) {
@@ -562,37 +604,155 @@ PluginComponent {
     component GestureRow: Item {
         id: gRow
 
-        required property string gesture
-        required property string fn
+        required property var row          // decoded CLI gesture row
+
+        readonly property string rowKey: gRow.row ? (gRow.row.ear + ":" + gRow.row.action) : ""
+        readonly property bool expanded: root.expandedGesture === gRow.rowKey
+        readonly property var options: root.gestureOptions(gRow.row ? gRow.row.action : 0)
 
         width: parent ? parent.width : 0
-        height: 26
+        height: headerItem.height + (gRow.expanded ? optionsCol.implicitHeight + Theme.spacingXS : 0)
+        clip: true
 
-        StyledText {
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            text: gRow.gesture
-            font.pixelSize: Theme.fontSizeSmall
-            color: Theme.surfaceVariantText
+        Behavior on height {
+            NumberAnimation {
+                duration: Theme.mediumDuration
+                easing.type: Theme.standardEasing
+            }
         }
 
-        RowLayout {
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Theme.spacingXS
+        Item {
+            id: headerItem
 
-            DankIcon {
-                name: root.functionIcon(gRow.fn)
-                size: 14
-                color: Theme.surfaceText
-                Layout.alignment: Qt.AlignVCenter
-            }
+            width: parent.width
+            height: 26
 
             StyledText {
-                text: root.functionLabel(gRow.fn)
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: gRow.row ? gRow.row.action_name : ""
                 font.pixelSize: Theme.fontSizeSmall
-                color: Theme.surfaceText
-                Layout.alignment: Qt.AlignVCenter
+                color: Theme.surfaceVariantText
+            }
+
+            RowLayout {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Theme.spacingXS
+
+                DankIcon {
+                    name: root.functionIcon(gRow.row ? gRow.row.function : -1)
+                    size: 14
+                    color: Theme.surfaceText
+                    Layout.alignment: Qt.AlignVCenter
+                }
+
+                StyledText {
+                    text: root.functionLabel(gRow.row ? gRow.row.function : -1)
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceText
+                    Layout.alignment: Qt.AlignVCenter
+                }
+
+                DankIcon {
+                    name: "expand_more"
+                    size: 14
+                    color: Theme.surfaceVariantText
+                    rotation: gRow.expanded ? 180 : 0
+                    Layout.alignment: Qt.AlignVCenter
+
+                    Behavior on rotation {
+                        NumberAnimation {
+                            duration: Theme.shortDuration
+                            easing.type: Theme.standardEasing
+                        }
+                    }
+                }
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                enabled: root.connected
+                hoverEnabled: true
+                cursorShape: root.connected ? Qt.PointingHandCursor : Qt.ArrowCursor
+                onClicked: root.toggleGestureEditor(gRow.rowKey)
+            }
+        }
+
+        Column {
+            id: optionsCol
+
+            width: parent.width
+            y: headerItem.height
+            spacing: 2
+
+            Repeater {
+                model: gRow.options
+
+                delegate: Item {
+                    id: optionRow
+
+                    required property int modelData
+
+                    readonly property bool current: gRow.row !== null && gRow.row.function === optionRow.modelData
+
+                    width: optionsCol.width
+                    height: 26
+
+                    StyledRect {
+                        anchors.fill: parent
+                        radius: 6
+                        color: optionMouse.containsMouse ? Theme.withAlpha(Theme.primary, 0.14) : "transparent"
+
+                        Behavior on color {
+                            ColorAnimation {
+                                duration: Theme.shorterDuration
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        anchors.left: parent.left
+                        anchors.leftMargin: Theme.spacingS
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Theme.spacingS
+
+                        DankIcon {
+                            name: root.functionIcon(optionRow.modelData)
+                            size: 14
+                            color: optionRow.current ? Theme.primary : Theme.surfaceText
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+
+                        StyledText {
+                            text: root.functionLabel(optionRow.modelData)
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.weight: optionRow.current ? Font.Medium : Font.Normal
+                            color: optionRow.current ? Theme.primary : Theme.surfaceText
+                            Layout.alignment: Qt.AlignVCenter
+                            Layout.fillWidth: true
+                        }
+
+                        DankIcon {
+                            visible: optionRow.current
+                            name: "check"
+                            size: 14
+                            color: Theme.primary
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+                    }
+
+                    MouseArea {
+                        id: optionMouse
+
+                        anchors.fill: parent
+                        enabled: root.connected
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.setGestureFor(gRow.row, optionRow.modelData)
+                    }
+                }
             }
         }
     }
@@ -1028,52 +1188,6 @@ PluginComponent {
                                 wrapMode: Text.WordWrap
                             }
                         }
-
-                        StyledRect {
-                            width: parent.width
-                            height: 1
-                            color: Theme.withAlpha(Theme.surfaceVariantText, 0.1)
-                        }
-
-                        Column {
-                            width: parent.width
-                            spacing: Theme.spacingXS
-
-                            StyledText {
-                                text: "Triple-tap action"
-                                font.pixelSize: Theme.fontSizeMedium
-                                color: Theme.surfaceText
-                            }
-
-                            StyledText {
-                                text: "Left & right earbud"
-                                font.pixelSize: Theme.fontSizeSmall - 1
-                                color: Theme.surfaceVariantText
-                            }
-
-                            Item {
-                                width: parent.width
-                                height: tripleGroup.implicitHeight * tripleGroup.scale
-
-                                DankButtonGroup {
-                                    id: tripleGroup
-
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    scale: Math.min(1, parent.width / implicitWidth)
-                                    transformOrigin: Item.Center
-                                    size: "small"
-                                    selectionMode: "single"
-                                    enabled: root.connected
-                                    model: ["Voice assistant", "Game mode"]
-                                    currentIndex: root.tripleActionIndex
-                                    onSelectionChanged: (index, selected) => {
-                                        if (!selected)
-                                            return;
-                                        root.runControl(["gesture-set", "4", "1", "3", index === 0 ? "3" : "17"]);
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
 
@@ -1159,6 +1273,14 @@ PluginComponent {
                                 anchors.margins: Theme.spacingM
                                 spacing: Theme.spacingM
 
+                                StyledText {
+                                    width: parent.width
+                                    visible: root.gestureRows.length > 0
+                                    text: "Tap a gesture to change what it does."
+                                    font.pixelSize: Theme.fontSizeSmall - 1
+                                    color: Theme.withAlpha(Theme.surfaceVariantText, 0.85)
+                                }
+
                                 Repeater {
                                     model: {
                                         const out = [];
@@ -1202,8 +1324,7 @@ PluginComponent {
                                             delegate: GestureRow {
                                                 required property var modelData
 
-                                                gesture: modelData.action_name
-                                                fn: modelData.function_name
+                                                row: modelData
                                             }
                                         }
                                     }
