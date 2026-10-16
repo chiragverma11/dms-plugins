@@ -21,7 +21,7 @@ PluginComponent {
     // --- melodyctl CLI resolution -------------------------------------------
     // Order: explicit override (setting) -> `melodyctl` on PATH -> dev fallback.
     readonly property string devFallback: "/home/chirag/stuff/melodyctl/melodyctl.py"
-    readonly property string installHint: "pipx install git+https://github.com/chiragverma11/melodyctl"
+    readonly property string installHint: "uv tool install --python /usr/bin/python3 git+https://github.com/chiragverma11/melodyctl"
 
     // `command` is the forward setting; `scriptPath` is read as a legacy fallback.
     property string commandOverride: PluginService.loadPluginData("melodyctl", "command",

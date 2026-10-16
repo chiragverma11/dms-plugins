@@ -3,7 +3,7 @@
     "name": "Enco Buds Battery & Controls",
     "description": "Left / Right / Case battery plus game mode and touch-gesture controls for OPPO Enco Buds (ETI81), via the melodyctl CLI over the OPOv1/RFCOMM protocol.",
     "category": "utilities",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "author": "chirag",
     "license": "MIT",
     "icon": "headset",

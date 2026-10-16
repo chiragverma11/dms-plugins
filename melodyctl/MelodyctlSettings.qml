@@ -9,7 +9,7 @@ PluginSettings {
     id: root
     pluginId: "melodyctl"
 
-    readonly property string installHint: "pipx install git+https://github.com/chiragverma11/melodyctl"
+    readonly property string installHint: "uv tool install --python /usr/bin/python3 git+https://github.com/chiragverma11/melodyctl"
 
     property bool testRunning: false
     property string testResult: ""
@@ -86,7 +86,7 @@ PluginSettings {
 
     StyledText {
         width: parent.width
-        text: "This plugin needs the melodyctl CLI. Install it, then use Test:"
+        text: "This plugin needs the melodyctl CLI (uv or pipx). Install it, then use Test:"
         font.pixelSize: Theme.fontSizeSmall
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
@@ -110,6 +110,15 @@ PluginSettings {
             font.pixelSize: Theme.fontSizeSmall
             font.family: "monospace"
         }
+    }
+
+    StyledText {
+        width: parent.width
+        topPadding: Theme.spacingS
+        text: "pipx also works: pipx install git+https://github.com/chiragverma11/melodyctl"
+        font.pixelSize: Theme.fontSizeSmall - 1
+        color: Theme.surfaceVariantText
+        wrapMode: Text.WordWrap
     }
 
     Row {

@@ -24,8 +24,9 @@ Then add the widget to a bar via DMS layout settings (`rightWidgets`, etc.).
 ## Notes
 
 - `melodyctl/` needs the **`melodyctl` CLI** on your `PATH`
-  (`pipx install git+https://github.com/chiragverma11/melodyctl`). The plugin
-  auto-detects it, or you can point it at a script path in its settings.
+  (`uv tool install --python /usr/bin/python3 git+https://github.com/chiragverma11/melodyctl`;
+  a system Python is required because uv-managed Pythons lack Bluetooth sockets). The
+  plugin auto-detects it, or you can point it at a script path in its settings.
 - Plugins here are personal and verified only against the hardware named in
   each plugin's README.
 
