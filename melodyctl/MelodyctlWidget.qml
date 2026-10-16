@@ -18,8 +18,22 @@ PluginComponent {
     ccWidgetSecondaryText: root.pillText
     ccWidgetIsActive: root.connected
 
-    property string scriptPath: PluginService.loadPluginData("melodyctl", "scriptPath", "/home/chirag/stuff/melodyctl/melodyctl.py")
+    // --- melodyctl CLI resolution -------------------------------------------
+    // Order: explicit override (setting) -> `melodyctl` on PATH -> dev fallback.
+    readonly property string devFallback: "/home/chirag/stuff/melodyctl/melodyctl.py"
+    readonly property string installHint: "pipx install git+https://github.com/chiragverma11/melodyctl"
+
+    // `command` is the forward setting; `scriptPath` is read as a legacy fallback.
+    property string commandOverride: PluginService.loadPluginData("melodyctl", "command",
+            PluginService.loadPluginData("melodyctl", "scriptPath", ""))
     property int pollInterval: parseInt(PluginService.loadPluginData("melodyctl", "pollInterval", "120"), 10)
+
+    property string cliPath: ""
+    property bool cliIsScript: false
+    property bool cliChecked: false
+    property bool cliAvailable: false
+    property string cliVersion: ""
+    property string cliError: ""
 
     property int leftLevel: -1
     property int rightLevel: -1
@@ -35,7 +49,63 @@ PluginComponent {
     readonly property string leftCell: leftLevel < 0 ? "–" : String(leftLevel)
     readonly property string rightCell: rightLevel < 0 ? "–" : String(rightLevel)
     readonly property string caseCell: caseLevel < 0 ? "–" : String(caseLevel)
-    readonly property string pillText: hasData ? leftCell + "·" + rightCell + "·" + caseCell : "--"
+    readonly property string pillText: !cliAvailable
+        ? (cliChecked ? "setup" : "…")
+        : (hasData ? leftCell + "·" + rightCell + "·" + caseCell : "--")
+
+    // Resolve the CLI in one shell probe: honour an override, else PATH, else dev path.
+    readonly property string resolveScript: [
+        'if [ -n "$1" ]; then',
+        '  if command -v "$1" >/dev/null 2>&1 || [ -f "$1" ]; then printf "%s" "$1"; exit 0; fi',
+        '  printf "MISSING_OVERRIDE"; exit 0',
+        'fi',
+        'if command -v melodyctl >/dev/null 2>&1; then printf "%s" "$(command -v melodyctl)"; exit 0; fi',
+        'if [ -f "$2" ]; then printf "%s" "$2"; exit 0; fi',
+        'printf "NONE"'
+    ].join("\n")
+
+    function cliArgs(rest) {
+        const base = root.cliIsScript ? ["python3", root.cliPath] : [root.cliPath];
+        return base.concat(rest);
+    }
+
+    function resolveCli() {
+        if (resolveProcess.running)
+            return;
+        resolveProcess.command = ["sh", "-c", root.resolveScript, "sh", root.commandOverride, root.devFallback];
+        resolveProcess.running = true;
+    }
+
+    function ensureCli() {
+        if (!root.cliChecked && !resolveProcess.running)
+            root.resolveCli();
+    }
+
+    function onResolved(result) {
+        root.cliChecked = true;
+        if (result === "" || result === "NONE" || result === "MISSING_OVERRIDE") {
+            root.cliAvailable = false;
+            root.cliPath = "";
+            root.cliError = result === "MISSING_OVERRIDE"
+                ? "melodyctl not found at the configured command/path"
+                : "melodyctl CLI not found";
+            return;
+        }
+        root.cliPath = result;
+        root.cliIsScript = result.endsWith(".py");
+        root.cliAvailable = true;
+        root.cliError = "";
+        root.checkVersion();
+        root.refresh();
+        root.loadGestures();
+    }
+
+    function checkVersion() {
+        if (versionProcess.running)
+            return;
+        versionProcess.command = root.cliArgs(["--version"]);
+        versionProcess.running = true;
+    }
 
     function levelText(value) {
         return value < 0 ? "--" : value + "%";
@@ -46,6 +116,8 @@ PluginComponent {
         return rows.map(r => r.action_name + ": " + r.function_name).join("   ");
     }
 
+    Component.onCompleted: root.resolveCli()
+
     Connections {
         target: PluginService
         ignoreUnknownSignals: true
@@ -53,8 +125,12 @@ PluginComponent {
         function onPluginDataChanged(changedPluginId) {
             if (changedPluginId !== "melodyctl")
                 return;
-            root.scriptPath = PluginService.loadPluginData("melodyctl", "scriptPath", root.scriptPath);
+            root.commandOverride = PluginService.loadPluginData("melodyctl", "command",
+                    PluginService.loadPluginData("melodyctl", "scriptPath", ""));
             root.pollInterval = parseInt(PluginService.loadPluginData("melodyctl", "pollInterval", "120"), 10);
+            root.cliChecked = false;
+            root.cliAvailable = false;
+            root.resolveCli();
         }
     }
 
@@ -66,17 +142,25 @@ PluginComponent {
         onTriggered: root.refresh()
     }
 
-    Timer {
-        interval: 400
-        repeat: false
-        running: true
-        triggeredOnStart: true
-        onTriggered: root.loadGestures()
+    Process {
+        id: resolveProcess
+
+        stdout: StdioCollector {
+            onStreamFinished: root.onResolved(text.trim())
+        }
+    }
+
+    Process {
+        id: versionProcess
+
+        stdout: StdioCollector {
+            onStreamFinished: root.cliVersion = text.trim().replace("melodyctl ", "")
+        }
+        stderr: StdioCollector {}
     }
 
     Process {
         id: batteryProcess
-        command: ["python3", root.scriptPath, "battery", "--json"]
 
         stdout: StdioCollector {
             onStreamFinished: {
@@ -103,6 +187,7 @@ PluginComponent {
 
     Process {
         id: gestureProcess
+
         stdout: StdioCollector {
             onStreamFinished: {
                 try {
@@ -116,6 +201,7 @@ PluginComponent {
 
     Process {
         id: controlProcess
+
         stdout: StdioCollector {
             onStreamFinished: {
                 if (text.trim() !== "")
@@ -131,22 +217,31 @@ PluginComponent {
     }
 
     function refresh() {
+        if (!root.cliAvailable) {
+            root.ensureCli();
+            return;
+        }
         if (batteryProcess.running)
             return;
+        batteryProcess.command = root.cliArgs(["battery", "--json"]);
         batteryProcess.running = true;
     }
 
     function loadGestures() {
+        if (!root.cliAvailable)
+            return;
         if (gestureProcess.running)
             return;
-        gestureProcess.command = ["python3", root.scriptPath, "gestures", "--json"];
+        gestureProcess.command = root.cliArgs(["gestures", "--json"]);
         gestureProcess.running = true;
     }
 
     function runControl(args) {
+        if (!root.cliAvailable)
+            return;
         if (controlProcess.running)
             return;
-        controlProcess.command = ["python3", root.scriptPath].concat(args);
+        controlProcess.command = root.cliArgs(args);
         controlProcess.running = true;
     }
 
@@ -251,7 +346,10 @@ PluginComponent {
     popoutContent: Component {
         PopoutComponent {
             headerText: "OPPO Enco Buds"
-            detailsText: root.connected ? (root.status !== "" ? root.status : "Live battery + controls") : (root.lastError !== "" ? root.lastError : "Earbuds not connected")
+            detailsText: !root.cliAvailable
+                ? (root.cliError !== "" ? root.cliError : "melodyctl CLI not found")
+                : root.connected ? (root.status !== "" ? root.status : "Live battery + controls")
+                                 : (root.lastError !== "" ? root.lastError : "Earbuds not connected")
             showCloseButton: true
 
             Column {
@@ -259,6 +357,16 @@ PluginComponent {
                 spacing: Theme.spacingS
                 topPadding: Theme.spacingS
                 bottomPadding: Theme.spacingS
+
+                StyledText {
+                    width: parent.width
+                    visible: root.cliChecked && !root.cliAvailable
+                    text: "The melodyctl CLI is required. Install it with:\n\n    " + root.installHint
+                        + "\n\nOr set a custom command / script path in this plugin's settings."
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
+                    wrapMode: Text.WordWrap
+                }
 
                 BatteryRow {
                     label: "Left"
@@ -273,6 +381,14 @@ PluginComponent {
                 BatteryRow {
                     label: "Case"
                     value: root.caseLevel
+                }
+
+                StyledText {
+                    width: parent.width
+                    visible: root.cliAvailable && root.cliVersion !== ""
+                    text: "melodyctl " + root.cliVersion
+                    font.pixelSize: Theme.fontSizeSmall - 1
+                    color: Theme.surfaceVariantText
                 }
 
                 StyledText {

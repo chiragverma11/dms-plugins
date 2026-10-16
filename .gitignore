@@ -1,0 +1,4 @@
+# editors / OS cruft
+*.user
+*~
+.DS_Store

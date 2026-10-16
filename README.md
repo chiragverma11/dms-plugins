@@ -1,50 +1,34 @@
-# melodyctl-dms
+# dms-plugins
 
-A [DankMaterialShell](https://github.com/AvengeMedia/DankMaterialShell)
-(Quickshell) widget for **OPPO Enco Buds (ETI81)**: a bar pill showing
-Left / Right / Case battery, with a popout for game mode and touch-gesture
-controls.
+My plugins for [DankMaterialShell](https://github.com/AvengeMedia/DankMaterialShell).
 
-It is a thin UI over the **`melodyctl`** CLI - all device I/O happens through
-that CLI, so this plugin needs no Bluetooth code of its own.
+Each plugin lives in its own camelCase folder with a `plugin.json`, so several
+plugins can share this one repository.
 
-## Requirements
+## Plugins
 
-- DankMaterialShell (Quickshell)
-- The `melodyctl` CLI (sibling project) and its dependencies
-- Buds paired and connected
+| Plugin | Type | Description |
+|---|---|---|
+| [melodyctl](melodyctl) | DankBar Widget / Popout | Left / Right / Case battery plus game mode and touch-gesture controls for **OPPO Enco Buds (ETI81)**, driven by the [`melodyctl`](https://github.com/chiragverma11/melodyctl) CLI. |
 
 ## Install
 
 ```bash
-# 1. put the plugin where DMS looks for it
-ln -s /path/to/melodyctl-dms ~/.config/DankMaterialShell/plugins/melodyctl
-
-# 2. tell DMS which CLI to run (Settings -> Plugins -> melodyctl), or edit
-#    ~/.config/DankMaterialShell/plugin_settings.json:
-#    { "melodyctl": { "enabled": true, "scriptPath": "/path/to/melodyctl/melodyctl.py" } }
-
-# 3. reload
+git clone https://github.com/chiragverma11/dms-plugins
+ln -s "$PWD/dms-plugins/melodyctl" ~/.config/DankMaterialShell/plugins/melodyctl
 dms ipc call plugins reload melodyctl
 ```
 
-Add the widget to a bar via your DMS layout settings (`rightWidgets`, etc.).
+Then add the widget to a bar via DMS layout settings (`rightWidgets`, etc.).
 
-## Settings
+## Notes
 
-| Key | Default | Meaning |
-|---|---|---|
-| `scriptPath` | `/home/chirag/stuff/melodyctl/melodyctl.py` | path to the melodyctl CLI |
-| `pollInterval` | `120` | battery poll interval, seconds |
-
-## Files
-
-| File | Role |
-|---|---|
-| `plugin.json` | plugin manifest (id `melodyctl`) |
-| `MelodyctlWidget.qml` | bar pill + popout (battery rows, game mode, gestures) |
-| `MelodyctlSettings.qml` | settings UI (`scriptPath`, `pollInterval`) |
+- `melodyctl/` needs the **`melodyctl` CLI** on your `PATH`
+  (`pipx install git+https://github.com/chiragverma11/melodyctl`). The plugin
+  auto-detects it, or you can point it at a script path in its settings.
+- Plugins here are personal and verified only against the hardware named in
+  each plugin's README.
 
 ## License
 
-[MIT](LICENSE). Not affiliated with or endorsed by OPPO / HeyTap.
+[MIT](LICENSE).
