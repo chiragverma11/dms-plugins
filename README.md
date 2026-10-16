@@ -9,7 +9,7 @@ plugins can share this one repository.
 
 | Plugin | Type | Description |
 |---|---|---|
-| [melodyctl](melodyctl) | DankBar Widget / Popout | Left / Right / Case battery plus game mode and touch-gesture controls for **OPPO Enco Buds (ETI81)**, driven by the [`melodyctl`](https://github.com/chiragverma11/melodyctl) CLI. |
+| [Melodyctl Buds](melodyctl) | DankBar Widget / Popout | Left / Right / Case battery plus game mode and touch-gesture controls for **OPPO Enco Buds (ETI81)**, driven by the [`melodyctl`](https://github.com/chiragverma11/melodyctl) CLI. |
 
 ## Install
 

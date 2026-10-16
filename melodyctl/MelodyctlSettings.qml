@@ -74,7 +74,7 @@ PluginSettings {
 
     StyledText {
         width: parent.width
-        text: "Enco Buds Battery & Controls"
+        text: "Melodyctl Buds"
         font.pixelSize: Theme.fontSizeLarge
         font.weight: Font.Bold
         color: Theme.surfaceText
