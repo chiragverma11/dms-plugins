@@ -235,4 +235,24 @@ PluginSettings {
         leftIconName: "timer"
         onEditingFinished: root.saveValue("pollInterval", text)
     }
+
+    StyledText {
+        width: parent.width
+        topPadding: Theme.spacingS
+        text: "Bar pill"
+        font.pixelSize: Theme.fontSizeSmall
+        font.weight: Font.Bold
+        color: Theme.surfaceVariantText
+    }
+
+    DankToggle {
+        width: parent.width
+        text: "Show battery numbers"
+        description: "Compact (default) keeps just the earbuds icon. On adds L·R·C next to it. Right-clicking the pill toggles this too."
+        Component.onCompleted: checked = root.loadValue("pillStyle", "compact") === "full"
+        onToggled: function (newChecked) {
+            checked = newChecked;
+            root.saveValue("pillStyle", newChecked ? "full" : "compact");
+        }
+    }
 }

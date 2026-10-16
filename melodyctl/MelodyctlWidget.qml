@@ -14,10 +14,14 @@ PluginComponent {
     popoutWidth: 320
     popoutHeight: 0
 
-    ccWidgetIcon: "headset"
+    ccWidgetIcon: "earbuds"
     ccWidgetPrimaryText: "Enco Buds"
     ccWidgetSecondaryText: root.pillText
     ccWidgetIsActive: root.connected
+
+    // Left click opens the popout; right click flips the pill between compact
+    // (icon only) and full (icon + L·R·C).
+    pillRightClickAction: () => root.togglePillStyle()
 
     // --- melodyctl CLI resolution -------------------------------------------
     // Order: explicit override (setting) -> `melodyctl` on PATH -> dev fallback.
@@ -28,6 +32,8 @@ PluginComponent {
     property string commandOverride: PluginService.loadPluginData("melodyctl", "command",
             PluginService.loadPluginData("melodyctl", "scriptPath", ""))
     property int pollInterval: parseInt(PluginService.loadPluginData("melodyctl", "pollInterval", "120"), 10)
+    // "compact" (icon only, default) or "full" (icon + L·R·C).
+    property string pillStyle: PluginService.loadPluginData("melodyctl", "pillStyle", "compact")
 
     property string cliPath: ""
     property bool cliIsScript: false
@@ -66,6 +72,19 @@ PluginComponent {
         root.errorDetail = "";
         root.errorCode = "";
         root.errorTransient = false;
+    }
+
+    // Drop any stale readings so a disconnected popout never shows old numbers.
+    function clearLevels() {
+        root.leftLevel = -1;
+        root.rightLevel = -1;
+        root.caseLevel = -1;
+        root.batteryUpdatedAt = 0;
+    }
+
+    function togglePillStyle() {
+        root.pillStyle = root.pillStyle === "full" ? "compact" : "full";
+        PluginService.savePluginData("melodyctl", "pillStyle", root.pillStyle);
     }
 
     // --- serialized CLI runner (one RFCOMM connection at a time) -------------
@@ -137,6 +156,14 @@ PluginComponent {
     readonly property string pillText: !cliAvailable
         ? (cliChecked ? "setup" : "…")
         : (hasData ? leftCell + "·" + rightCell + "·" + caseCell : "--")
+
+    // Dim the pill while the earbuds are unreachable so the state is obvious.
+    readonly property color pillIconColor: root.connected
+        ? (Theme.widgetIconColor || Theme.primary)
+        : Theme.withAlpha(Theme.widgetIconColor || Theme.primary, 0.45)
+    readonly property color pillTextColor: root.connected
+        ? (Theme.widgetTextColor || Theme.surfaceText)
+        : Theme.withAlpha(Theme.widgetTextColor || Theme.surfaceText, 0.6)
 
     readonly property string statusLine: {
         if (!root.cliAvailable)
@@ -221,12 +248,18 @@ PluginComponent {
         function onPluginDataChanged(changedPluginId) {
             if (changedPluginId !== "melodyctl")
                 return;
-            root.commandOverride = PluginService.loadPluginData("melodyctl", "command",
-                    PluginService.loadPluginData("melodyctl", "scriptPath", ""));
+            root.pillStyle = PluginService.loadPluginData("melodyctl", "pillStyle", "compact");
             root.pollInterval = parseInt(PluginService.loadPluginData("melodyctl", "pollInterval", "120"), 10);
-            root.cliChecked = false;
-            root.cliAvailable = false;
-            root.resolveCli();
+            // Only re-resolve the CLI when the command/path actually changed, so a
+            // pill-style flip doesn't spawn extra probes.
+            const newCommand = PluginService.loadPluginData("melodyctl", "command",
+                    PluginService.loadPluginData("melodyctl", "scriptPath", ""));
+            if (newCommand !== root.commandOverride) {
+                root.commandOverride = newCommand;
+                root.cliChecked = false;
+                root.cliAvailable = false;
+                root.resolveCli();
+            }
         }
     }
 
@@ -293,9 +326,11 @@ PluginComponent {
                     root.clearError();
                 } catch (e) {
                     root.connected = false;
+                    root.clearLevels();
                 }
             } else {
                 root.connected = false;
+                root.clearLevels();
                 if (res.err !== "")
                     root.setError(res.err);
             }
@@ -402,17 +437,18 @@ PluginComponent {
             spacing: Theme.spacingXS
 
             DankIcon {
-                name: "headset"
+                name: "earbuds"
                 size: root.iconSize
-                color: Theme.widgetIconColor || Theme.primary
+                color: root.pillIconColor
                 Layout.alignment: Qt.AlignVCenter
             }
 
             StyledText {
+                visible: root.pillStyle === "full"
                 text: root.pillText
                 font.pixelSize: Theme.fontSizeSmall - 1
                 font.weight: Font.Medium
-                color: Theme.widgetTextColor || Theme.surfaceText
+                color: root.pillTextColor
                 Layout.alignment: Qt.AlignVCenter
             }
         }
@@ -420,9 +456,9 @@ PluginComponent {
 
     verticalBarPill: Component {
         DankIcon {
-            name: "headset"
+            name: "earbuds"
             size: root.iconSize
-            color: Theme.widgetIconColor || Theme.primary
+            color: root.pillIconColor
             anchors.centerIn: parent
         }
     }
