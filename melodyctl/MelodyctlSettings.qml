@@ -46,7 +46,7 @@ PluginSettings {
         stderr: StdioCollector {
             onStreamFinished: root.testErr = text
         }
-        onExited: (code, status) => {
+        onExited: code => {
             root.testRunning = false;
             const o = root.testOut.trim();
             const e = root.testErr.trim();
