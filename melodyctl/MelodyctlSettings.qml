@@ -4,6 +4,7 @@ import Quickshell.Io
 import qs.Common
 import qs.Widgets
 import qs.Modules.Plugins
+import "errfmt.js" as ErrFmt
 
 PluginSettings {
     id: root
@@ -12,7 +13,9 @@ PluginSettings {
     readonly property string installHint: "uv tool install --python /usr/bin/python3 git+https://github.com/chiragverma11/melodyctl"
 
     property bool testRunning: false
+    property bool testOk: false
     property string testResult: ""
+    property string testDetail: ""
     property string testOut: ""
     property string testErr: ""
 
@@ -20,7 +23,9 @@ PluginSettings {
         if (testProcess.running)
             return;
         root.testRunning = true;
+        root.testOk = false;
         root.testResult = "";
+        root.testDetail = "";
         root.testOut = "";
         root.testErr = "";
         const override = root.loadValue("command", root.loadValue("scriptPath", ""));
@@ -50,12 +55,20 @@ PluginSettings {
             root.testRunning = false;
             const o = root.testOut.trim();
             const e = root.testErr.trim();
-            if (o === "NOT_FOUND")
-                root.testResult = "FAILED — melodyctl not found on PATH or at the configured path";
-            else if (code === 0 && o !== "")
+            if (o === "NOT_FOUND") {
+                root.testOk = false;
+                root.testResult = "Failed — melodyctl not found on PATH or at the configured path";
+                root.testDetail = "";
+            } else if (code === 0 && o !== "") {
+                root.testOk = true;
                 root.testResult = "OK — " + o;
-            else
-                root.testResult = "FAILED — " + (e || o || ("exit " + code));
+                root.testDetail = "";
+            } else {
+                const info = ErrFmt.humanize(e || o || ("exit " + code));
+                root.testOk = false;
+                root.testResult = "Failed — " + (info.title || "melodyctl failed");
+                root.testDetail = info.hint !== "" ? info.hint + "\n\n" + info.detail : info.detail;
+            }
         }
     }
 
@@ -151,8 +164,33 @@ PluginSettings {
         visible: root.testResult !== ""
         text: root.testResult
         font.pixelSize: Theme.fontSizeSmall
-        color: root.testResult.startsWith("OK") ? Theme.primary : Theme.error
+        font.weight: Font.Medium
+        color: root.testOk ? Theme.primary : Theme.error
         wrapMode: Text.WordWrap
+    }
+
+    StyledRect {
+        width: parent.width
+        visible: root.testDetail !== ""
+        height: visible ? testDetailText.height + Theme.spacingM * 2 : 0
+        radius: Theme.cornerRadius
+        color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
+
+        TextEdit {
+            id: testDetailText
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: Theme.spacingM
+            height: Math.min(contentHeight, 120)
+            readOnly: true
+            selectByMouse: true
+            wrapMode: TextEdit.Wrap
+            text: root.testDetail
+            color: Theme.surfaceVariantText
+            font.pixelSize: Theme.fontSizeSmall - 1
+            font.family: "monospace"
+        }
     }
 
     StyledText {

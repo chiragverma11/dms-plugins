@@ -6,6 +6,7 @@ import qs.Common
 import qs.Widgets
 import qs.Modules.Plugins
 import qs.Services
+import "errfmt.js" as ErrFmt
 
 PluginComponent {
     id: root
@@ -39,8 +40,33 @@ PluginComponent {
     property int rightLevel: -1
     property int caseLevel: -1
     property bool connected: false
-    property string lastError: ""
     property string status: ""
+
+    // Friendly error state derived from CLI stderr (see errfmt.js). The raw text
+    // is kept in errorDetail for the (bounded) details box; the header only ever
+    // shows the short errorTitle.
+    property string errorTitle: ""
+    property string errorHint: ""
+    property string errorDetail: ""
+    property string errorCode: ""
+    property bool errorTransient: false
+
+    function setError(raw) {
+        const info = ErrFmt.humanize(raw);
+        root.errorTitle = info.title;
+        root.errorHint = info.hint;
+        root.errorDetail = info.detail;
+        root.errorCode = info.code;
+        root.errorTransient = info.transient;
+    }
+
+    function clearError() {
+        root.errorTitle = "";
+        root.errorHint = "";
+        root.errorDetail = "";
+        root.errorCode = "";
+        root.errorTransient = false;
+    }
 
     property var gestureRows: []
     property string gameMode: "unknown"
@@ -52,6 +78,16 @@ PluginComponent {
     readonly property string pillText: !cliAvailable
         ? (cliChecked ? "setup" : "…")
         : (hasData ? leftCell + "·" + rightCell + "·" + caseCell : "--")
+
+    readonly property string statusLine: {
+        if (!root.cliAvailable)
+            return root.cliError !== "" ? root.cliError : "melodyctl CLI not found";
+        if (root.errorTitle !== "")
+            return root.errorTitle;
+        if (root.connected)
+            return root.status !== "" ? root.status : "Live battery + controls";
+        return "Earbuds not connected";
+    }
 
     // Resolve the CLI in one shell probe: honour an override, else PATH, else dev path.
     readonly property string resolveScript: [
@@ -171,7 +207,7 @@ PluginComponent {
                     root.rightLevel = data.right ?? -1;
                     root.caseLevel = data.case ?? -1;
                     root.connected = true;
-                    root.lastError = "";
+                    root.clearError();
                 } catch (e) {
                     root.connected = false;
                 }
@@ -181,7 +217,7 @@ PluginComponent {
         stderr: StdioCollector {
             onStreamFinished: {
                 if (text.trim() !== "")
-                    root.lastError = text.trim();
+                    root.setError(text);
             }
         }
     }
@@ -205,14 +241,17 @@ PluginComponent {
 
         stdout: StdioCollector {
             onStreamFinished: {
-                if (text.trim() !== "")
-                    root.status = text.trim();
+                const out = text.trim();
+                if (out !== "") {
+                    root.status = out;
+                    root.clearError();
+                }
             }
         }
         stderr: StdioCollector {
             onStreamFinished: {
                 if (text.trim() !== "")
-                    root.status = text.trim();
+                    root.setError(text);
             }
         }
     }
@@ -347,10 +386,7 @@ PluginComponent {
     popoutContent: Component {
         PopoutComponent {
             headerText: "OPPO Enco Buds"
-            detailsText: !root.cliAvailable
-                ? (root.cliError !== "" ? root.cliError : "melodyctl CLI not found")
-                : root.connected ? (root.status !== "" ? root.status : "Live battery + controls")
-                                 : (root.lastError !== "" ? root.lastError : "Earbuds not connected")
+            detailsText: root.statusLine
             showCloseButton: true
 
             Column {
@@ -367,6 +403,48 @@ PluginComponent {
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
+                }
+
+                StyledRect {
+                    id: errorCard
+
+                    width: parent.width
+                    visible: root.errorDetail !== ""
+                    height: visible ? Math.min(errorCol.implicitHeight + Theme.spacingM * 2, 170) : 0
+                    radius: Theme.cornerRadius
+                    color: Theme.withAlpha(root.errorTransient ? Theme.surfaceContainerHigh : Theme.error,
+                                           root.errorTransient ? Theme.popupTransparency : 0.12)
+
+                    Column {
+                        id: errorCol
+
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: Theme.spacingM
+                        spacing: Theme.spacingS
+
+                        StyledText {
+                            width: parent.width
+                            visible: root.errorHint !== ""
+                            text: root.errorHint
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: root.errorTransient ? Theme.surfaceText : Theme.error
+                            wrapMode: Text.WordWrap
+                        }
+
+                        TextEdit {
+                            width: parent.width
+                            height: Math.min(contentHeight, 96)
+                            readOnly: true
+                            selectByMouse: true
+                            wrapMode: TextEdit.Wrap
+                            text: root.errorDetail
+                            color: Theme.surfaceVariantText
+                            font.pixelSize: Theme.fontSizeSmall - 1
+                            font.family: "monospace"
+                        }
+                    }
                 }
 
                 BatteryRow {

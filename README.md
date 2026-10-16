@@ -27,6 +27,10 @@ Then add the widget to a bar via DMS layout settings (`rightWidgets`, etc.).
   (`uv tool install --python /usr/bin/python3 git+https://github.com/chiragverma11/melodyctl`;
   a system Python is required because uv-managed Pythons lack Bluetooth sockets). The
   plugin auto-detects it, or you can point it at a script path in its settings.
+- Failures surface as a short message (e.g. *Earbuds busy*, *Earbuds
+  unreachable*) with the raw CLI output kept in a selectable **Details** box -
+  never a raw traceback. The CLI reports structured errors under `--json`
+  (`{"error":{"code","message","hint"}}`).
 - Plugins here are personal and verified only against the hardware named in
   each plugin's README.
 
