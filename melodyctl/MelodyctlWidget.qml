@@ -11,7 +11,7 @@ import "errfmt.js" as ErrFmt
 PluginComponent {
     id: root
 
-    popoutWidth: 320
+    popoutWidth: 340
     popoutHeight: 0
 
     ccWidgetIcon: "earbuds"
@@ -147,7 +147,10 @@ PluginComponent {
     }
 
     property var gestureRows: []
-    property string gameMode: "unknown"
+    // Game mode is write-only (no read command), so we can only remember the last
+    // command we sent rather than showing a real device state.
+    property string gameModeLastSent: ""
+    property bool gesturesExpanded: false
 
     readonly property bool hasData: leftLevel >= 0 || rightLevel >= 0 || caseLevel >= 0
     readonly property string leftCell: leftLevel < 0 ? "–" : String(leftLevel)
@@ -173,6 +176,18 @@ PluginComponent {
         if (root.connected)
             return root.status !== "" ? root.status : "Live battery + controls";
         return "Earbuds not connected";
+    }
+
+    // After a control action the header line shows the CLI's acknowledgement
+    // for a few seconds, then falls back to the default status line.
+    property int ackTimeout: 7000
+
+    Timer {
+        id: statusResetTimer
+
+        interval: root.ackTimeout
+        repeat: false
+        onTriggered: root.status = ""
     }
 
     // Resolve the CLI in one shell probe: honour an override, else PATH, else dev path.
@@ -230,13 +245,56 @@ PluginComponent {
         });
     }
 
-    function levelText(value) {
-        return value < 0 ? "--" : value + "%";
+    // --- gesture decoding for the popout ------------------------------------
+    readonly property var leftGestures: root.gestureRows.filter(r => r.ear === "left" && r.action >= 1 && r.action <= 4)
+    readonly property var rightGestures: root.gestureRows.filter(r => r.ear === "right" && r.action >= 1 && r.action <= 4)
+
+    // Triple-tap is the one gesture surfaced as a quick control (it maps to the
+    // "both earbuds" gesture id 4 when written).
+    readonly property var tripleRow: root.gestureRows.find(r => r.ear === "left" && r.button === 1 && r.action === 3)
+    readonly property int tripleActionIndex: {
+        if (!root.tripleRow)
+            return -1;
+        if (root.tripleRow.function === 3)
+            return 0;   // voice assistant
+        if (root.tripleRow.function === 17)
+            return 1;   // game mode
+        return -1;
     }
 
-    function gestureSummary(ear) {
-        const rows = root.gestureRows.filter(r => r.ear === ear && r.action >= 1 && r.action <= 4);
-        return rows.map(r => r.action_name + ": " + r.function_name).join("   ");
+    readonly property int gameModeIndex: root.gameModeLastSent === "on" ? 0
+        : (root.gameModeLastSent === "off" ? 1 : -1)
+
+    // Map a gesture function name to a Material Symbols glyph.
+    function functionIcon(name) {
+        switch (name) {
+        case "play/pause":
+            return "play_arrow";
+        case "previous song":
+        case "previous (OnePlus only)":
+            return "skip_previous";
+        case "next song":
+            return "skip_next";
+        case "voice assistant":
+            return "mic";
+        case "game mode":
+            return "sports_esports";
+        case "volume up":
+            return "volume_up";
+        case "volume down":
+            return "volume_down";
+        case "none":
+            return "block";
+        default:
+            return "graph_2";
+        }
+    }
+
+    // "previous song" -> "Previous song"
+    function functionLabel(name) {
+        if (!name || name.length === 0)
+            return "—";
+        return name.charAt(0).toUpperCase() + name.slice(1);
     }
 
     Component.onCompleted: root.resolveCli()
@@ -277,6 +335,16 @@ PluginComponent {
         repeat: true
         running: root.popoutVisible
         onTriggered: root.nowTick = Date.now()
+    }
+
+    // A gesture read can lose the race with the battery read for the buds'
+    // single RFCOMM connection, so retry once while the popout is open.
+    Timer {
+        id: gestureRetryTimer
+
+        interval: 700
+        repeat: false
+        onTriggered: root.loadGestures(false)
     }
 
     Process {
@@ -337,23 +405,32 @@ PluginComponent {
         });
     }
 
-    function loadGestures() {
+    function loadGestures(allowRetry) {
         root.runCli(["gestures", "--json"], res => {
+            let parsed = null;
             if (res.code === 0 && res.out !== "") {
                 try {
-                    root.gestureRows = JSON.parse(res.out);
+                    parsed = JSON.parse(res.out);
                 } catch (e) {
-                    root.gestureRows = [];
+                    parsed = null;
                 }
             }
+            if (parsed !== null) {
+                root.gestureRows = parsed;
+                return;
+            }
+            if (allowRetry !== false && root.popoutVisible)
+                gestureRetryTimer.restart();
         });
     }
 
     function runControl(args) {
         root.runCli(args, res => {
             const out = (res.out || "").trim();
-            if (out !== "")
+            if (out !== "") {
                 root.status = out;
+                statusResetTimer.restart();
+            }
             if (res.code === 0) {
                 root.clearError();
                 if (args[0] === "gesture-set")
@@ -364,71 +441,159 @@ PluginComponent {
         });
     }
 
-    component BatteryRow: StyledRect {
-        id: row
+    component SectionLabel: StyledText {
+        font.pixelSize: Theme.fontSizeSmall - 1
+        font.weight: Font.Bold
+        font.letterSpacing: 1.3
+        font.capitalization: Font.AllUppercase
+        color: Theme.surfaceVariantText
+    }
+
+    component BatteryGauge: Item {
+        id: gauge
 
         required property string label
+        required property string iconName
         required property int value
+        property bool known: false
 
-        width: root.popoutWidth - Theme.spacingL * 2
-        height: 44
-        radius: Theme.cornerRadius
-        color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
+        readonly property int pct: gauge.value < 0 ? 0 : Math.min(100, gauge.value)
+        readonly property color accent: !gauge.known
+            ? Theme.surfaceVariantText
+            : (gauge.value <= 15 ? Theme.error : (gauge.value <= 30 ? Theme.warning : Theme.primary))
 
-        RowLayout {
-            anchors.fill: parent
-            anchors.margins: Theme.spacingM
-            spacing: Theme.spacingM
+        implicitHeight: gaugeCol.implicitHeight
 
-            DankIcon {
-                name: Theme.getBatteryIcon(row.value, false, row.value >= 0)
-                size: 20
-                color: Theme.primary
-                Layout.alignment: Qt.AlignVCenter
+        Column {
+            id: gaugeCol
+
+            width: parent.width
+            spacing: Theme.spacingXS
+
+            Item {
+                width: parent.width
+                height: Theme.iconSize + 8
+
+                DankIcon {
+                    anchors.centerIn: parent
+                    name: gauge.iconName
+                    size: Theme.iconSize + 2
+                    color: gauge.accent
+                    opacity: gauge.known ? 1 : 0.45
+
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: Theme.mediumDuration
+                            easing.type: Theme.standardEasing
+                        }
+                    }
+
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: Theme.mediumDuration
+                            easing.type: Theme.standardEasing
+                        }
+                    }
+                }
             }
 
             StyledText {
-                text: row.label
-                font.pixelSize: Theme.fontSizeMedium
-                color: Theme.surfaceText
-                Layout.fillWidth: true
-                Layout.alignment: Qt.AlignVCenter
-            }
-
-            StyledText {
-                text: root.levelText(row.value)
-                font.pixelSize: Theme.fontSizeMedium
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                text: gauge.known ? gauge.value + "%" : "–"
+                font.pixelSize: Theme.fontSizeLarge + 1
                 font.weight: Font.Bold
-                color: row.value >= 0 && row.value <= 20 ? Theme.error : Theme.surfaceText
-                Layout.alignment: Qt.AlignVCenter
+                color: gauge.known ? Theme.surfaceText : Theme.surfaceVariantText
+                opacity: gauge.known ? 1 : 0.55
+
+                Behavior on color {
+                    ColorAnimation {
+                        duration: Theme.mediumDuration
+                        easing.type: Theme.standardEasing
+                    }
+                }
+
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: Theme.mediumDuration
+                        easing.type: Theme.standardEasing
+                    }
+                }
+            }
+
+            StyledRect {
+                width: parent.width
+                height: 4
+                radius: 2
+                color: Theme.withAlpha(Theme.surfaceVariantText, 0.16)
+
+                StyledRect {
+                    height: parent.height
+                    radius: parent.radius
+                    width: gauge.known ? parent.width * gauge.pct / 100 : 0
+                    color: gauge.accent
+
+                    Behavior on width {
+                        NumberAnimation {
+                            duration: Theme.mediumDuration
+                            easing.type: Theme.standardEasing
+                        }
+                    }
+
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: Theme.mediumDuration
+                            easing.type: Theme.standardEasing
+                        }
+                    }
+                }
+            }
+
+            StyledText {
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                text: gauge.label
+                font.pixelSize: Theme.fontSizeSmall - 1
+                color: Theme.surfaceVariantText
             }
         }
     }
 
-    component ActionButton: StyledRect {
-        id: btn
+    component GestureRow: Item {
+        id: gRow
 
-        required property string label
-        property bool accent: false
-        signal clicked()
+        required property string gesture
+        required property string fn
 
-        width: Math.max(64, labelText.implicitWidth + Theme.spacingM * 2)
-        height: 30
-        radius: Theme.cornerRadius
-        color: accent ? Theme.primary : Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
+        width: parent ? parent.width : 0
+        height: 26
 
         StyledText {
-            id: labelText
-            anchors.centerIn: parent
-            text: btn.label
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: gRow.gesture
             font.pixelSize: Theme.fontSizeSmall
-            font.weight: Font.Medium
-            color: Theme.surfaceText
+            color: Theme.surfaceVariantText
         }
 
-        MouseArea {
-            anchors.fill: parent
-            onClicked: btn.clicked()
+        RowLayout {
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Theme.spacingXS
+
+            DankIcon {
+                name: root.functionIcon(gRow.fn)
+                size: 14
+                color: Theme.surfaceText
+                Layout.alignment: Qt.AlignVCenter
+            }
+
+            StyledText {
+                text: root.functionLabel(gRow.fn)
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.surfaceText
+                Layout.alignment: Qt.AlignVCenter
+            }
         }
     }
 
@@ -465,9 +630,25 @@ PluginComponent {
 
     popoutContent: Component {
         PopoutComponent {
+            id: popoutRoot
+
             headerText: "OPPO Enco Buds"
-            detailsText: root.statusLine
+            // The status line is rendered below (monospace + smaller) so it can be
+            // styled, so the built-in details line stays empty.
+            detailsText: ""
             showCloseButton: true
+
+            headerActions: Component {
+                DankActionButton {
+                    iconName: "refresh"
+                    iconColor: root.batteryRefreshing ? Theme.primary : Theme.surfaceText
+                    tooltipText: "Refresh"
+                    onClicked: {
+                        root.refresh();
+                        root.loadGestures();
+                    }
+                }
+            }
 
             // Refresh whenever the popout opens, so it never shows stale data.
             readonly property bool popoutNow: parentPopout ? parentPopout.shouldBeVisible : false
@@ -478,36 +659,171 @@ PluginComponent {
                     root.nowTick = Date.now();
                     root.refresh();
                     root.loadGestures();
+                    contentCol.shown = false;
+                    entranceTimer.restart();
                 }
             }
 
-            Component.onCompleted: root.popoutVisible = popoutNow
+            Component.onCompleted: {
+                root.popoutVisible = popoutNow;
+                contentCol.shown = true;
+            }
+
+            Timer {
+                id: entranceTimer
+
+                interval: 16
+                repeat: false
+                onTriggered: contentCol.shown = true
+            }
 
             Column {
-                width: parent.width
-                spacing: Theme.spacingS
-                topPadding: Theme.spacingS
-                bottomPadding: Theme.spacingS
+                id: contentCol
 
-                StyledText {
-                    width: parent.width
-                    visible: root.cliChecked && !root.cliAvailable
-                    text: "The melodyctl CLI is required. Install it with:\n\n    " + root.installHint
-                        + "\n\nOr set a custom command / script path in this plugin's settings."
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.surfaceVariantText
-                    wrapMode: Text.WordWrap
+                width: parent.width
+                spacing: Theme.spacingM
+
+                property bool shown: true
+
+                opacity: contentCol.shown ? 1 : 0
+                transform: Translate {
+                    y: contentCol.shown ? 0 : 12
+
+                    Behavior on y {
+                        NumberAnimation {
+                            duration: Theme.mediumDuration
+                            easing.type: Theme.standardEasing
+                        }
+                    }
                 }
 
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: Theme.mediumDuration
+                        easing.type: Theme.standardEasing
+                    }
+                }
+
+                // Status / acknowledgement line (under the title).
+                StyledText {
+                    width: parent.width
+                    leftPadding: Theme.spacingS
+                    text: root.statusLine
+                    isMonospace: true
+                    font.pixelSize: Theme.fontSizeSmall - 1
+                    color: Theme.surfaceVariantText
+                    wrapMode: Text.WordWrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                }
+
+                // --- resolving CLI -------------------------------------------------
+                RowLayout {
+                    width: parent.width
+                    visible: !root.cliChecked
+                    spacing: Theme.spacingS
+
+                    DankSpinner {
+                        size: 16
+                        running: true
+                        color: Theme.surfaceVariantText
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+
+                    StyledText {
+                        text: "Looking for melodyctl…"
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.surfaceVariantText
+                        Layout.alignment: Qt.AlignVCenter
+                        Layout.fillWidth: true
+                    }
+                }
+
+                // --- CLI missing ---------------------------------------------------
+                StyledRect {
+                    width: parent.width
+                    visible: root.cliChecked && !root.cliAvailable
+                    implicitHeight: installCol.implicitHeight + Theme.spacingM * 2
+                    radius: Theme.cornerRadius
+                    color: Theme.nestedSurface
+                    border.width: 1
+                    border.color: Theme.withAlpha(Theme.warning, 0.3)
+
+                    Column {
+                        id: installCol
+
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: Theme.spacingM
+                        spacing: Theme.spacingS
+
+                        RowLayout {
+                            width: parent.width
+                            spacing: Theme.spacingS
+
+                            DankIcon {
+                                name: "info"
+                                size: Theme.iconSizeSmall
+                                color: Theme.warning
+                                Layout.alignment: Qt.AlignVCenter
+                            }
+
+                            StyledText {
+                                text: "melodyctl CLI required"
+                                font.pixelSize: Theme.fontSizeMedium
+                                font.weight: Font.Medium
+                                color: Theme.surfaceText
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.fillWidth: true
+                            }
+                        }
+
+                        StyledText {
+                            width: parent.width
+                            text: "Install it, or set a custom command / script path in this plugin's settings."
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceVariantText
+                            wrapMode: Text.WordWrap
+                        }
+
+                        TextEdit {
+                            width: parent.width
+                            height: contentHeight + topPadding + bottomPadding
+                            readOnly: true
+                            selectByMouse: true
+                            wrapMode: TextEdit.WrapAnywhere
+                            text: root.installHint
+                            color: Theme.surfaceText
+                            font.family: "monospace"
+                            font.pixelSize: Theme.fontSizeSmall - 1
+                            leftPadding: Theme.spacingS
+                            rightPadding: Theme.spacingS
+                            topPadding: Theme.spacingXS
+                            bottomPadding: Theme.spacingXS
+
+                            Rectangle {
+                                anchors.fill: parent
+                                z: -1
+                                radius: 6
+                                color: Theme.withAlpha(Theme.surfaceVariantText, 0.12)
+                            }
+                        }
+                    }
+                }
+
+                // --- error ---------------------------------------------------------
                 StyledRect {
                     id: errorCard
 
                     width: parent.width
-                    visible: root.errorDetail !== ""
-                    height: visible ? Math.min(errorCol.implicitHeight + Theme.spacingM * 2, 170) : 0
+                    visible: root.errorDetail !== "" && root.cliAvailable
+                    implicitHeight: visible ? Math.min(errorCol.implicitHeight + Theme.spacingM * 2, 190) : 0
                     radius: Theme.cornerRadius
-                    color: Theme.withAlpha(root.errorTransient ? Theme.surfaceContainerHigh : Theme.error,
-                                           root.errorTransient ? Theme.popupTransparency : 0.12)
+                    color: Theme.withAlpha(root.errorTransient ? Theme.surfaceVariantText : Theme.error,
+                                           root.errorTransient ? 0.1 : 0.14)
+                    border.width: 1
+                    border.color: Theme.withAlpha(root.errorTransient ? Theme.surfaceVariantText : Theme.error, 0.25)
 
                     Column {
                         id: errorCol
@@ -518,18 +834,33 @@ PluginComponent {
                         anchors.margins: Theme.spacingM
                         spacing: Theme.spacingS
 
-                        StyledText {
+                        RowLayout {
                             width: parent.width
-                            visible: root.errorHint !== ""
-                            text: root.errorHint
-                            font.pixelSize: Theme.fontSizeSmall
-                            color: root.errorTransient ? Theme.surfaceText : Theme.error
-                            wrapMode: Text.WordWrap
+                            spacing: Theme.spacingS
+
+                            DankIcon {
+                                name: root.errorTransient ? "info" : "warning"
+                                size: Theme.iconSizeSmall
+                                color: root.errorTransient ? Theme.surfaceVariantText : Theme.error
+                                Layout.alignment: Qt.AlignVCenter
+                            }
+
+                            StyledText {
+                                width: parent.width
+                                visible: root.errorHint !== ""
+                                text: root.errorHint
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.weight: Font.Medium
+                                color: root.errorTransient ? Theme.surfaceText : Theme.error
+                                wrapMode: Text.WordWrap
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.fillWidth: true
+                            }
                         }
 
                         TextEdit {
                             width: parent.width
-                            height: Math.min(contentHeight, 96)
+                            height: Math.min(contentHeight + topPadding + bottomPadding, 110)
                             readOnly: true
                             selectByMouse: true
                             wrapMode: TextEdit.Wrap
@@ -541,123 +872,364 @@ PluginComponent {
                     }
                 }
 
-                BatteryRow {
-                    label: "Left"
-                    value: root.leftLevel
-                }
-
-                BatteryRow {
-                    label: "Right"
-                    value: root.rightLevel
-                }
-
-                BatteryRow {
-                    label: "Case"
-                    value: root.caseLevel
-                }
-
-                StyledText {
+                // --- battery -------------------------------------------------------
+                StyledRect {
                     width: parent.width
-                    visible: root.cliAvailable && root.freshnessText !== ""
-                    text: root.freshnessText
-                    font.pixelSize: Theme.fontSizeSmall - 1
-                    color: Theme.surfaceVariantText
+                    visible: root.cliAvailable
+                    implicitHeight: batteryCol.implicitHeight + Theme.spacingM * 2
+                    radius: Theme.cornerRadius
+                    color: Theme.nestedSurface
+                    border.width: 1
+                    border.color: Theme.withAlpha(Theme.surfaceVariantText, 0.08)
+
+                    Column {
+                        id: batteryCol
+
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: Theme.spacingM
+                        spacing: Theme.spacingM
+
+                        RowLayout {
+                            width: parent.width
+                            spacing: Theme.spacingXS
+
+                            SectionLabel {
+                                text: "Battery"
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.fillWidth: true
+                            }
+
+                            DankSpinner {
+                                size: 12
+                                running: root.batteryRefreshing
+                                visible: root.batteryRefreshing
+                                color: Theme.surfaceVariantText
+                                Layout.alignment: Qt.AlignVCenter
+                            }
+
+                            StyledText {
+                                text: root.freshnessText
+                                font.pixelSize: Theme.fontSizeSmall - 1
+                                color: Theme.surfaceVariantText
+                                Layout.alignment: Qt.AlignVCenter
+                            }
+                        }
+
+                        RowLayout {
+                            width: parent.width
+                            spacing: Theme.spacingS
+
+                            BatteryGauge {
+                                Layout.fillWidth: true
+                                label: "Left"
+                                iconName: "earbud_left"
+                                value: root.leftLevel
+                                known: root.connected && root.leftLevel >= 0
+                            }
+
+                            BatteryGauge {
+                                Layout.fillWidth: true
+                                label: "Right"
+                                iconName: "earbud_right"
+                                value: root.rightLevel
+                                known: root.connected && root.rightLevel >= 0
+                            }
+
+                            BatteryGauge {
+                                Layout.fillWidth: true
+                                label: "Case"
+                                iconName: "earbud_case"
+                                value: root.caseLevel
+                                known: root.connected && root.caseLevel >= 0
+                            }
+                        }
+                    }
                 }
 
+                // --- controls ------------------------------------------------------
+                StyledRect {
+                    width: parent.width
+                    visible: root.cliAvailable
+                    implicitHeight: controlsCol.implicitHeight + Theme.spacingM * 2
+                    radius: Theme.cornerRadius
+                    color: Theme.nestedSurface
+                    border.width: 1
+                    border.color: Theme.withAlpha(Theme.surfaceVariantText, 0.08)
+
+                    Column {
+                        id: controlsCol
+
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: Theme.spacingM
+                        spacing: Theme.spacingM
+
+                        // Everything here needs the earbuds, so mute it when they
+                        // are unreachable instead of letting taps fail silently.
+                        opacity: root.connected ? 1 : 0.45
+
+                        Behavior on opacity {
+                            NumberAnimation {
+                                duration: Theme.mediumDuration
+                                easing.type: Theme.standardEasing
+                            }
+                        }
+
+                        Column {
+                            width: parent.width
+                            spacing: Theme.spacingXS
+
+                            RowLayout {
+                                width: parent.width
+                                spacing: Theme.spacingS
+
+                                Column {
+                                    spacing: 2
+                                    Layout.fillWidth: true
+                                    Layout.alignment: Qt.AlignVCenter
+
+                                    StyledText {
+                                        text: "Game mode"
+                                        font.pixelSize: Theme.fontSizeMedium
+                                        color: Theme.surfaceText
+                                    }
+
+                                    StyledText {
+                                        text: "Low-latency audio"
+                                        font.pixelSize: Theme.fontSizeSmall - 1
+                                        color: Theme.surfaceVariantText
+                                    }
+                                }
+
+                                DankButtonGroup {
+                                    Layout.alignment: Qt.AlignVCenter
+                                    size: "small"
+                                    selectionMode: "single"
+                                    enabled: root.connected
+                                    model: ["On", "Off"]
+                                    currentIndex: root.gameModeIndex
+                                    onSelectionChanged: (index, selected) => {
+                                        if (!selected)
+                                            return;
+                                        root.gameModeLastSent = index === 0 ? "on" : "off";
+                                        root.runControl(["game", root.gameModeLastSent]);
+                                    }
+                                }
+                            }
+
+                            StyledText {
+                                width: parent.width
+                                text: "Not reported by the buds — shows last sent."
+                                font.pixelSize: Theme.fontSizeSmall - 1
+                                color: Theme.withAlpha(Theme.surfaceVariantText, 0.85)
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+
+                        StyledRect {
+                            width: parent.width
+                            height: 1
+                            color: Theme.withAlpha(Theme.surfaceVariantText, 0.1)
+                        }
+
+                        Column {
+                            width: parent.width
+                            spacing: Theme.spacingXS
+
+                            StyledText {
+                                text: "Triple-tap action"
+                                font.pixelSize: Theme.fontSizeMedium
+                                color: Theme.surfaceText
+                            }
+
+                            StyledText {
+                                text: "Left & right earbud"
+                                font.pixelSize: Theme.fontSizeSmall - 1
+                                color: Theme.surfaceVariantText
+                            }
+
+                            Item {
+                                width: parent.width
+                                height: tripleGroup.implicitHeight * tripleGroup.scale
+
+                                DankButtonGroup {
+                                    id: tripleGroup
+
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    scale: Math.min(1, parent.width / implicitWidth)
+                                    transformOrigin: Item.Center
+                                    size: "small"
+                                    selectionMode: "single"
+                                    enabled: root.connected
+                                    model: ["Voice assistant", "Game mode"]
+                                    currentIndex: root.tripleActionIndex
+                                    onSelectionChanged: (index, selected) => {
+                                        if (!selected)
+                                            return;
+                                        root.runControl(["gesture-set", "4", "1", "3", index === 0 ? "3" : "17"]);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // --- touch gestures (collapsible) ----------------------------------
+                Column {
+                    width: parent.width
+                    visible: root.cliAvailable
+                    spacing: Theme.spacingS
+
+                    Item {
+                        width: parent.width
+                        height: 26
+
+                        // Not reachable -> the gesture table can't be read, so
+                        // keep the section collapsed and non-interactive.
+                        opacity: root.connected ? 1 : 0.5
+
+                        Behavior on opacity {
+                            NumberAnimation {
+                                duration: Theme.mediumDuration
+                                easing.type: Theme.standardEasing
+                            }
+                        }
+
+                        SectionLabel {
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "Touch gestures"
+                        }
+
+                        DankIcon {
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            name: "expand_more"
+                            size: Theme.iconSizeSmall
+                            color: Theme.surfaceVariantText
+                            rotation: (root.gesturesExpanded && root.connected) ? 180 : 0
+
+                            Behavior on rotation {
+                                NumberAnimation {
+                                    duration: Theme.shortDuration
+                                    easing.type: Theme.standardEasing
+                                }
+                            }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            enabled: root.connected
+                            cursorShape: root.connected ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: root.gesturesExpanded = !root.gesturesExpanded
+                        }
+                    }
+
+                    Item {
+                        width: parent.width
+                        height: (root.gesturesExpanded && root.connected) ? gestureCard.implicitHeight : 0
+                        clip: true
+
+                        Behavior on height {
+                            NumberAnimation {
+                                duration: Theme.mediumDuration
+                                easing.type: Theme.standardEasing
+                            }
+                        }
+
+                        StyledRect {
+                            id: gestureCard
+
+                            width: parent.width
+                            implicitHeight: gestureBody.implicitHeight + Theme.spacingM * 2
+                            radius: Theme.cornerRadius
+                            color: Theme.nestedSurface
+                            border.width: 1
+                            border.color: Theme.withAlpha(Theme.surfaceVariantText, 0.08)
+
+                            Column {
+                                id: gestureBody
+
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.margins: Theme.spacingM
+                                spacing: Theme.spacingM
+
+                                Repeater {
+                                    model: {
+                                        const out = [];
+                                        if (root.leftGestures.length > 0)
+                                            out.push({ "ear": "left", "icon": "earbud_left", "rows": root.leftGestures });
+                                        if (root.rightGestures.length > 0)
+                                            out.push({ "ear": "right", "icon": "earbud_right", "rows": root.rightGestures });
+                                        return out;
+                                    }
+
+                                    delegate: Column {
+                                        required property var modelData
+
+                                        width: gestureBody.width
+                                        spacing: Theme.spacingXS
+
+                                        RowLayout {
+                                            width: parent.width
+                                            spacing: Theme.spacingXS
+
+                                            DankIcon {
+                                                name: modelData.icon
+                                                size: 14
+                                                color: Theme.surfaceVariantText
+                                                Layout.alignment: Qt.AlignVCenter
+                                            }
+
+                                            StyledText {
+                                                text: modelData.ear === "left" ? "Left earbud" : "Right earbud"
+                                                font.pixelSize: Theme.fontSizeSmall - 1
+                                                font.weight: Font.Medium
+                                                color: Theme.surfaceVariantText
+                                                Layout.alignment: Qt.AlignVCenter
+                                                Layout.fillWidth: true
+                                            }
+                                        }
+
+                                        Repeater {
+                                            model: modelData.rows
+
+                                            delegate: GestureRow {
+                                                required property var modelData
+
+                                                gesture: modelData.action_name
+                                                fn: modelData.function_name
+                                            }
+                                        }
+                                    }
+                                }
+
+                                StyledText {
+                                    width: parent.width
+                                    visible: root.gestureRows.length === 0
+                                    text: "No gesture data yet."
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: Theme.surfaceVariantText
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // --- footer --------------------------------------------------------
                 StyledText {
                     width: parent.width
                     visible: root.cliAvailable && root.cliVersion !== ""
                     text: "melodyctl " + root.cliVersion
+                    horizontalAlignment: Text.AlignHCenter
                     font.pixelSize: Theme.fontSizeSmall - 1
-                    color: Theme.surfaceVariantText
-                }
-
-                StyledText {
-                    width: parent.width
-                    topPadding: Theme.spacingS
-                    text: "Game mode"
-                    font.pixelSize: Theme.fontSizeSmall
-                    font.weight: Font.Bold
-                    color: Theme.surfaceVariantText
-                }
-
-                RowLayout {
-                    width: parent.width
-                    spacing: Theme.spacingS
-
-                    ActionButton {
-                        label: "Game mode ON"
-                        accent: root.gameMode === "on"
-                        onClicked: {
-                            root.gameMode = "on";
-                            root.runControl(["game", "on"]);
-                        }
-                    }
-
-                    ActionButton {
-                        label: "OFF"
-                        accent: root.gameMode === "off"
-                        onClicked: {
-                            root.gameMode = "off";
-                            root.runControl(["game", "off"]);
-                        }
-                    }
-                }
-
-                StyledText {
-                    width: parent.width
-                    topPadding: Theme.spacingS
-                    text: "Triple-tap action"
-                    font.pixelSize: Theme.fontSizeSmall
-                    font.weight: Font.Bold
-                    color: Theme.surfaceVariantText
-                }
-
-                RowLayout {
-                    width: parent.width
-                    spacing: Theme.spacingS
-
-                    ActionButton {
-                        label: "Voice assistant"
-                        onClicked: root.runControl(["gesture-set", "4", "1", "3", "3"])
-                    }
-
-                    ActionButton {
-                        label: "Game mode"
-                        onClicked: root.runControl(["gesture-set", "4", "1", "3", "17"])
-                    }
-                }
-
-                StyledText {
-                    width: parent.width
-                    topPadding: Theme.spacingS
-                    text: "Touch gestures"
-                    font.pixelSize: Theme.fontSizeSmall
-                    font.weight: Font.Bold
-                    color: Theme.surfaceVariantText
-                }
-
-                StyledText {
-                    width: parent.width
-                    visible: root.gestureRows.length > 0
-                    text: "L:  " + root.gestureSummary("left")
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.surfaceText
-                    wrapMode: Text.WordWrap
-                }
-
-                StyledText {
-                    width: parent.width
-                    visible: root.gestureRows.length > 0
-                    text: "R:  " + root.gestureSummary("right")
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.surfaceText
-                    wrapMode: Text.WordWrap
-                }
-
-                ActionButton {
-                    label: "Refresh gestures"
-                    onClicked: root.loadGestures()
+                    color: Theme.withAlpha(Theme.surfaceVariantText, 0.8)
+                    topPadding: Theme.spacingXS
                 }
             }
         }
