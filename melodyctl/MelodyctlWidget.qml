@@ -14,8 +14,13 @@ PluginComponent {
     popoutWidth: 340
     popoutHeight: 0
 
+    // Device name shown in the control-center tile and popout header; filled
+    // in from `melodyctl device --json` after the first successful poll.
+    property string deviceName: ""
+    readonly property string deviceLabel: root.deviceName !== "" ? root.deviceName : "Melodyctl Buds"
+
     ccWidgetIcon: "earbuds"
-    ccWidgetPrimaryText: "Enco Buds"
+    ccWidgetPrimaryText: root.deviceLabel
     ccWidgetSecondaryText: root.pillText
     ccWidgetIsActive: root.connected
 
@@ -304,8 +309,8 @@ PluginComponent {
         }
     }
 
-    // Functions the ETI81 whitelist allows for each tap action (single/double/
-    // triple/long). Kept in sync with ACTION_FUNCTIONS in the CLI.
+    // Functions the verified profile's whitelist allows for each tap action
+    // (single/double/triple/long). Kept in sync with ACTION_FUNCTIONS in the CLI.
     readonly property var gestureActionFunctions: ({
         "1": [0, 1],
         "2": [0, 1, 5, 6],
@@ -356,6 +361,7 @@ PluginComponent {
                 root.commandOverride = newCommand;
                 root.cliChecked = false;
                 root.cliAvailable = false;
+                root.deviceName = "";
                 root.resolveCli();
             }
         }
@@ -415,6 +421,24 @@ PluginComponent {
         }
     }
 
+    // The model label is fetched once per session (and again if the CLI is
+    // re-resolved) so every poll doesn't need its own RFCOMM round-trip.
+    function loadDeviceName(force) {
+        if (!force && root.deviceName !== "")
+            return;
+        root.runCli(["device", "--json"], res => {
+            if (res.code !== 0 || res.out === "")
+                return;
+            try {
+                const d = JSON.parse(res.out);
+                if (d && typeof d.name === "string" && d.name !== "")
+                    root.deviceName = d.name;
+            } catch (e) {
+                // keep the fallback label
+            }
+        });
+    }
+
     function refresh() {
         if (!root.cliAvailable) {
             root.ensureCli();
@@ -432,6 +456,7 @@ PluginComponent {
                     root.connected = true;
                     root.batteryUpdatedAt = Date.now();
                     root.clearError();
+                    root.loadDeviceName(false);
                 } catch (e) {
                     root.connected = false;
                     root.clearLevels();
@@ -792,7 +817,7 @@ PluginComponent {
         PopoutComponent {
             id: popoutRoot
 
-            headerText: "OPPO Enco Buds"
+            headerText: root.deviceLabel
             // The status line is rendered below (monospace + smaller) so it can be
             // styled, so the built-in details line stays empty.
             detailsText: ""
