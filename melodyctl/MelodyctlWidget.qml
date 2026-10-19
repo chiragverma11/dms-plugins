@@ -14,9 +14,10 @@ PluginComponent {
     popoutWidth: 340
     popoutHeight: 0
 
-    // Device name shown in the control-center tile and popout header; filled
-    // in from `melodyctl device --json` after the first successful poll.
+    // Device name / product id shown in the control-center tile and popout
+    // header; filled in from the daemon's state.json or `melodyctl device --json`.
     property string deviceName: ""
+    property string deviceId: ""
     readonly property string deviceLabel: root.deviceName !== "" ? root.deviceName : "Melodyctl Buds"
 
     ccWidgetIcon: "earbuds"
@@ -50,8 +51,38 @@ PluginComponent {
     property int leftLevel: -1
     property int rightLevel: -1
     property int caseLevel: -1
+    property bool leftCharging: false
+    property bool rightCharging: false
+    property bool caseCharging: false
     property bool connected: false
     property string status: ""
+
+    // --- daemon push source ---------------------------------------------------
+    // A running `melodyctl daemon` owns the single RFCOMM link and publishes what
+    // the device pushes to $XDG_RUNTIME_DIR/melodyctl/state.json. Reading that
+    // file needs no Bluetooth connection, so the widget prefers it and only
+    // polls the CLI when the daemon is absent or its file has gone stale. The
+    // contract lives in docs/daemon.md in the melodyctl repo.
+    readonly property string daemonStatePath: {
+        const dir = Quickshell.env("XDG_RUNTIME_DIR");
+        return (dir && dir.length > 0) ? dir + "/melodyctl/state.json" : "";
+    }
+    // Last parsed state.json; null when there is no daemon / no readable file.
+    property var daemonState: null
+    // Its `ts` in ms. The daemon rewrites the file at least every 60 s, so an
+    // older file is a crashed daemon's leftover, not live truth.
+    property real daemonTs: 0
+    readonly property bool daemonPresent: root.daemonState !== null
+    readonly property bool daemonFresh: root.daemonPresent && root.daemonTs > 0
+        && (root.nowTick - root.daemonTs) < 150000
+    readonly property bool daemonLive: root.daemonFresh && root.daemonState.session === "connected"
+    readonly property bool daemonWaiting: root.daemonFresh && root.daemonState.session === "waiting"
+    property string daemonProduct: ""
+    // Bud/lid state (event 2) and the last game-mode push (event 5); both only
+    // exist while a daemon is holding the link.
+    property var budStatus: null
+    property bool gameKnown: false
+    property bool gameOn: false
 
     // Friendly error state derived from CLI stderr (see errfmt.js). The raw text
     // is kept in errorDetail for the (bounded) details box; the header only ever
@@ -84,7 +115,76 @@ PluginComponent {
         root.leftLevel = -1;
         root.rightLevel = -1;
         root.caseLevel = -1;
+        root.leftCharging = false;
+        root.rightCharging = false;
+        root.caseCharging = false;
         root.batteryUpdatedAt = 0;
+    }
+
+    // The daemon is gone (or its file is unreadable): nothing it told us is
+    // current any more, so drop the push-only state too.
+    function clearDaemonState() {
+        root.daemonState = null;
+        root.daemonTs = 0;
+        root.daemonProduct = "";
+        root.budStatus = null;
+        root.gameKnown = false;
+        root.gameOn = false;
+    }
+
+    // Apply one state.json read. Everything in it is what the device pushed to
+    // the daemon, so while this file is fresh the widget never opens its own
+    // RFCOMM link to read battery.
+    function applyDaemonState(text) {
+        let d = null;
+        try {
+            d = JSON.parse(text);
+        } catch (e) {
+            d = null;
+        }
+        if (!d || typeof d !== "object" || d.session === undefined) {
+            root.clearDaemonState();
+            return;
+        }
+        root.daemonState = d;
+        root.daemonTs = typeof d.ts === "number" ? d.ts * 1000 : 0;
+        root.daemonProduct = typeof d.product === "string" ? d.product : "";
+        if (typeof d.device === "string" && d.device !== "")
+            root.deviceName = d.device;      // no `device --json` needed
+        if (d.session !== "connected") {
+            // Waiting: the daemon owns the link and is retrying. Its last
+            // numbers are not current, so never show them.
+            root.connected = false;
+            root.clearLevels();
+            root.budStatus = null;
+            root.gameKnown = false;
+            root.gameOn = false;
+            if (d.error)
+                root.setError(JSON.stringify({ error: d.error }));
+            return;
+        }
+        root.connected = true;
+        const battery = d.battery || {};
+        const level = key => (battery[key] && typeof battery[key].level === "number")
+            ? battery[key].level : -1;
+        const charging = key => !!(battery[key] && battery[key].charging);
+        root.leftLevel = level("left");
+        root.rightLevel = level("right");
+        root.caseLevel = level("case");
+        root.leftCharging = charging("left");
+        root.rightCharging = charging("right");
+        root.caseCharging = charging("case");
+        root.budStatus = d.status || null;
+        root.batteryUpdatedAt = (typeof d.updated === "number" && d.updated > 0)
+            ? d.updated * 1000 : root.daemonTs;
+        if (d.game) {
+            // The device pushed it (event 5), so real state beats what we sent.
+            root.gameKnown = true;
+            root.gameOn = !!d.game.on;
+            root.gameModeSent = "";
+        }
+        root.clearError();
+        root.loadGestureSlots();
     }
 
     function togglePillStyle() {
@@ -152,10 +252,41 @@ PluginComponent {
     }
 
     property var gestureRows: []
-    // Game mode is write-only (no read command), so we can only remember the last
-    // command we sent rather than showing a real device state.
-    property string gameModeLastSent: ""
+    // Optimistic game-mode value: only used when the buds have not told us
+    // anything (with a daemon they push event 5, which wins over this).
+    property string gameModeSent: ""
     property bool gesturesExpanded: false
+
+    // Live state (event 2) - bud in case / in ear and the case lid.
+    readonly property string budStatusText: {
+        const st = root.budStatus;
+        if (!st)
+            return "";
+        const parts = [];
+        const side = (key, label) => {
+            const s = st[key];
+            if (!s)
+                return;
+            parts.push(label + (s.in_ear ? " in ear" : (s.in_case ? " in case" : " out")));
+        };
+        side("left", "Left");
+        side("right", "Right");
+        // The case entry only carries the lid flag (its in-case/in-ear bits are
+        // not meaningful) - see docs/protocol/commands/notifications.md.
+        if (st.case)
+            parts.push("Lid " + (st.case.cover_open ? "open" : "closed"));
+        return parts.join(" · ");
+    }
+    readonly property string gameModeNote: {
+        if (root.gameKnown)
+            return "Reported by the buds.";
+        if (root.gameModeSent !== "")
+            return "Last set here; the buds have not reported it back yet.";
+        return "Not reported by the buds yet.";
+    }
+    readonly property int gameModeIndex: root.gameKnown
+        ? (root.gameOn ? 0 : 1)
+        : (root.gameModeSent === "on" ? 0 : (root.gameModeSent === "off" ? 1 : -1))
 
     readonly property bool hasData: leftLevel >= 0 || rightLevel >= 0 || caseLevel >= 0
     readonly property string leftCell: leftLevel < 0 ? "–" : String(leftLevel)
@@ -179,7 +310,10 @@ PluginComponent {
         if (root.errorTitle !== "")
             return root.errorTitle;
         if (root.connected)
-            return root.status !== "" ? root.status : "Live battery + controls";
+            return root.status !== "" ? root.status
+                : (root.daemonLive ? "Push updates via melodyctl daemon" : "Live battery + controls");
+        if (root.daemonWaiting)
+            return "Waiting for the earbuds (daemon)";
         return "Earbuds not connected";
     }
 
@@ -241,6 +375,9 @@ PluginComponent {
         root.checkVersion();
         root.refresh();
         root.loadGestures();
+        // state.json may have been read before we knew where the CLI is; try
+        // the slot table again now (it no-ops unless a product id is known).
+        root.loadGestureSlots();
     }
 
     function checkVersion() {
@@ -253,12 +390,6 @@ PluginComponent {
     // --- gesture decoding for the popout ------------------------------------
     readonly property var leftGestures: root.gestureRows.filter(r => r.ear === "left" && r.action >= 1 && r.action <= 4)
     readonly property var rightGestures: root.gestureRows.filter(r => r.ear === "right" && r.action >= 1 && r.action <= 4)
-
-    // Triple-tap used to be surfaced as a "both earbuds" shortcut, but the
-    // gesture list below is now editable per ear, so that shortcut was removed
-    // to avoid two sources of truth.
-    readonly property int gameModeIndex: root.gameModeLastSent === "on" ? 0
-        : (root.gameModeLastSent === "off" ? 1 : -1)
 
     // Map a gesture function id to a Material Symbols glyph / label. Ids come
     // from the device tables (0 none, 1 play/pause, 3 assistant, 5 prev,
@@ -305,21 +436,70 @@ PluginComponent {
         case 17:
             return "Game mode";
         default:
-            return "Function " + id;
+            return root.functionNameFromVocabulary(id);
         }
     }
 
-    // Functions the verified profile's whitelist allows for each tap action
-    // (single/double/triple/long). Kept in sync with ACTION_FUNCTIONS in the CLI.
-    readonly property var gestureActionFunctions: ({
-        "1": [0, 1],
-        "2": [0, 1, 5, 6],
-        "3": [0, 3, 17],
-        "4": [0, 11, 12]
-    })
+    // Names come from `gesture-set --list --json`'s vocabulary, so an id this
+    // widget has no glyph for still reads as something.
+    function functionNameFromVocabulary(id) {
+        const name = root.gestureFunctionNames[String(id)];
+        return (name && name.length > 0) ? name : ("Function " + id);
+    }
 
-    function gestureOptions(action) {
-        return root.gestureActionFunctions[String(action)] || [];
+    // --- gesture options (whitelist-driven, no RFCOMM) -----------------------
+    // `gesture-set --list --json --product <id>` is offline: it resolves the
+    // product's allowed (action -> function) pairs from the decrypted whitelist,
+    // so the editor shows exactly what that model can be written with. Writing
+    // anything else is refused by the CLI's own pre-flight check.
+    property var gestureSlots: []
+    property var gestureFunctionNames: ({})
+    property string gestureSlotsFor: ""
+
+    function loadGestureSlots() {
+        const pid = root.daemonProduct !== "" ? root.daemonProduct : root.deviceId;
+        if (pid === "" || pid === root.gestureSlotsFor)
+            return;
+        root.runCli(["gesture-set", "--list", "--json", "--product", pid], res => {
+            if (res.code !== 0 || res.out === "")
+                return;                     // older CLI: editor stays read-only
+            let d = null;
+            try {
+                d = JSON.parse(res.out);
+            } catch (e) {
+                d = null;
+            }
+            if (!d || !Array.isArray(d.slots))
+                return;
+            const names = {};
+            const vocab = (d.vocabulary && d.vocabulary.functions) || [];
+            for (let i = 0; i < vocab.length; ++i)
+                names[String(vocab[i].id)] = vocab[i].name;
+            root.gestureSlots = d.slots;
+            root.gestureFunctionNames = names;
+            root.gestureSlotsFor = pid;
+        });
+    }
+
+    // Function ids the whitelist allows for this (button, action). Presets the
+    // app offers but has no wire code for (function: null) are dropped: the CLI
+    // cannot write them either.
+    function gestureOptions(button, action) {
+        for (let i = 0; i < root.gestureSlots.length; ++i) {
+            const slot = root.gestureSlots[i];
+            if (slot.action !== action || (slot.button || 1) !== (button || 1))
+                continue;
+            const out = [];
+            const fns = slot.functions || [];
+            for (let k = 0; k < fns.length; ++k) {
+                const code = fns[k].function;
+                if (code === null || code === undefined || out.indexOf(code) !== -1)
+                    continue;
+                out.push(code);
+            }
+            return out;
+        }
+        return [];
     }
 
     // Only one gesture row may be expanded at a time ("ear:action").
@@ -362,11 +542,17 @@ PluginComponent {
                 root.cliChecked = false;
                 root.cliAvailable = false;
                 root.deviceName = "";
+                root.deviceId = "";
+                root.gestureSlots = [];
+                root.gestureSlotsFor = "";
                 root.resolveCli();
             }
         }
     }
 
+    // With no daemon this polls the CLI; with one it just re-reads the state
+    // file (the file watch normally beats it to it), so the interval is a
+    // safety net rather than an RFCOMM poll.
     Timer {
         interval: Math.max(15, root.pollInterval) * 1000
         repeat: true
@@ -421,10 +607,25 @@ PluginComponent {
         }
     }
 
-    // The model label is fetched once per session (and again if the CLI is
-    // re-resolved) so every poll doesn't need its own RFCOMM round-trip.
+    // The daemon's state file. Watch it so a push shows up as soon as it is
+    // written; atomic writes (tmp + rename) can defeat a file watch, so
+    // refresh() also reloads it on the poll interval.
+    FileView {
+        id: stateView
+
+        path: root.daemonStatePath
+        watchChanges: root.daemonStatePath !== ""
+        printErrors: false
+        onLoaded: root.applyDaemonState(text())
+        onFileChanged: stateView.reload()
+        onLoadFailed: root.clearDaemonState()
+    }
+
+    // The model label / product id are fetched once per session (and again if
+    // the CLI is re-resolved) so every poll doesn't need its own round-trip.
+    // With a daemon these come from state.json instead.
     function loadDeviceName(force) {
-        if (!force && root.deviceName !== "")
+        if (!force && root.deviceName !== "" && root.deviceId !== "")
             return;
         root.runCli(["device", "--json"], res => {
             if (res.code !== 0 || res.out === "")
@@ -433,6 +634,9 @@ PluginComponent {
                 const d = JSON.parse(res.out);
                 if (d && typeof d.name === "string" && d.name !== "")
                     root.deviceName = d.name;
+                if (d && typeof d.id === "string" && d.id !== "")
+                    root.deviceId = d.id;
+                root.loadGestureSlots();
             } catch (e) {
                 // keep the fallback label
             }
@@ -440,19 +644,32 @@ PluginComponent {
     }
 
     function refresh() {
+        root.nowTick = Date.now();
         if (!root.cliAvailable) {
             root.ensureCli();
             return;
         }
+        if (root.daemonFresh) {
+            // The daemon owns the link and this file is current: re-read it
+            // rather than opening a second RFCOMM connection of our own.
+            stateView.reload();
+            return;
+        }
         root.batteryRefreshing = true;
-        root.runCli(["battery", "--json"], res => {
+        root.runCli(["battery", "--json-full"], res => {
             root.batteryRefreshing = false;
             if (res.code === 0 && res.out !== "") {
                 try {
                     const data = JSON.parse(res.out);
-                    root.leftLevel = data.left ?? -1;
-                    root.rightLevel = data.right ?? -1;
-                    root.caseLevel = data.case ?? -1;
+                    const level = key => (data[key] && typeof data[key].level === "number")
+                        ? data[key].level : -1;
+                    const charging = key => !!(data[key] && data[key].charging);
+                    root.leftLevel = level("left");
+                    root.rightLevel = level("right");
+                    root.caseLevel = level("case");
+                    root.leftCharging = charging("left");
+                    root.rightCharging = charging("right");
+                    root.caseCharging = charging("case");
                     root.connected = true;
                     root.batteryUpdatedAt = Date.now();
                     root.clearError();
@@ -523,6 +740,7 @@ PluginComponent {
         required property string iconName
         required property int value
         property bool known: false
+        property bool charging: false
 
         readonly property int pct: gauge.value < 0 ? 0 : Math.min(100, gauge.value)
         readonly property color accent: !gauge.known
@@ -561,6 +779,18 @@ PluginComponent {
                             easing.type: Theme.standardEasing
                         }
                     }
+                }
+
+                // Charging comes either way: from the daemon's push data, or
+                // from the CLI poll (battery --json-full).
+                DankIcon {
+                    name: "bolt"
+                    size: 12
+                    visible: gauge.known && gauge.charging
+                    color: Theme.primary
+                    anchors.right: parent.right
+                    anchors.rightMargin: 2
+                    anchors.verticalCenter: parent.verticalCenter
                 }
             }
 
@@ -633,7 +863,10 @@ PluginComponent {
 
         readonly property string rowKey: gRow.row ? (gRow.row.ear + ":" + gRow.row.action) : ""
         readonly property bool expanded: root.expandedGesture === gRow.rowKey
-        readonly property var options: root.gestureOptions(gRow.row ? gRow.row.action : 0)
+        // Options come from the connected model's whitelist slots (offline).
+        readonly property var options: root.gestureOptions(gRow.row ? gRow.row.button : 1,
+                                                           gRow.row ? gRow.row.action : 0)
+        readonly property bool editable: gRow.options.length > 0
 
         width: parent ? parent.width : 0
         height: headerItem.height + (gRow.expanded ? optionsCol.implicitHeight + Theme.spacingXS : 0)
@@ -680,6 +913,7 @@ PluginComponent {
                 }
 
                 DankIcon {
+                    visible: gRow.editable
                     name: "expand_more"
                     size: 14
                     color: Theme.surfaceVariantText
@@ -697,9 +931,9 @@ PluginComponent {
 
             MouseArea {
                 anchors.fill: parent
-                enabled: root.connected
+                enabled: root.connected && gRow.editable
                 hoverEnabled: true
-                cursorShape: root.connected ? Qt.PointingHandCursor : Qt.ArrowCursor
+                cursorShape: (root.connected && gRow.editable) ? Qt.PointingHandCursor : Qt.ArrowCursor
                 onClicked: root.toggleGestureEditor(gRow.rowKey)
             }
         }
@@ -1138,6 +1372,7 @@ PluginComponent {
                                         iconName: "earbud_left"
                                         value: root.leftLevel
                                         known: root.connected && root.leftLevel >= 0
+                                        charging: root.leftCharging
                                     }
 
                                     BatteryGauge {
@@ -1146,6 +1381,7 @@ PluginComponent {
                                         iconName: "earbud_right"
                                         value: root.rightLevel
                                         known: root.connected && root.rightLevel >= 0
+                                        charging: root.rightCharging
                                     }
 
                                     BatteryGauge {
@@ -1154,7 +1390,19 @@ PluginComponent {
                                         iconName: "earbud_case"
                                         value: root.caseLevel
                                         known: root.connected && root.caseLevel >= 0
+                                        charging: root.caseCharging
                                     }
+                                }
+
+                                // Pushed bud/lid state (event 2): only a daemon
+                                // subscriber ever sees it.
+                                StyledText {
+                                    width: parent.width
+                                    visible: root.budStatusText !== ""
+                                    text: root.budStatusText
+                                    font.pixelSize: Theme.fontSizeSmall - 1
+                                    color: Theme.withAlpha(Theme.surfaceVariantText, 0.85)
+                                    wrapMode: Text.WordWrap
                                 }
                             }
                         }
@@ -1225,15 +1473,15 @@ PluginComponent {
                                             onSelectionChanged: (index, selected) => {
                                                 if (!selected)
                                                     return;
-                                                root.gameModeLastSent = index === 0 ? "on" : "off";
-                                                root.runControl(["game", root.gameModeLastSent]);
+                                                root.gameModeSent = index === 0 ? "on" : "off";
+                                                root.runControl(["game", root.gameModeSent]);
                                             }
                                         }
                                     }
 
                                     StyledText {
                                         width: parent.width
-                                        text: "Not reported by the buds — shows last sent."
+                                        text: root.gameModeNote
                                         font.pixelSize: Theme.fontSizeSmall - 1
                                         color: Theme.withAlpha(Theme.surfaceVariantText, 0.85)
                                         wrapMode: Text.WordWrap

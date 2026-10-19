@@ -238,6 +238,14 @@ PluginSettings {
 
     StyledText {
         width: parent.width
+        text: "How often to ask the earbuds when no daemon is running. With `melodyctl daemon` the widget reads its state file instead - pushes show up straight away and this is only a safety net."
+        font.pixelSize: Theme.fontSizeSmall
+        color: Theme.surfaceVariantText
+        wrapMode: Text.WordWrap
+    }
+
+    StyledText {
+        width: parent.width
         topPadding: Theme.spacingS
         text: "Bar pill"
         font.pixelSize: Theme.fontSizeSmall
