@@ -9,7 +9,7 @@ plugins can share this one repository.
 
 | Plugin | Type | Description |
 |---|---|---|
-| [Melodyctl Buds](melodyctl) | DankBar Widget / Popout | Left / Right / Case battery plus game mode and touch-gesture controls for **OPPO Enco Buds (ETI81)**, driven by the [`melodyctl`](https://github.com/chiragverma11/melodyctl) CLI. |
+| [Melodyctl Buds](melodyctl) | DankBar Widget / Popout | Left / Right / Case battery plus game mode and touch-gesture controls for **HeyMelody-family earbuds** (OPPO Enco / OnePlus Buds; verified on OPPO Enco Buds, ETI81), driven by the [`melodyctl`](https://github.com/chiragverma11/melodyctl) CLI. |
 
 ## Install
 
@@ -24,9 +24,12 @@ Then add the widget to a bar via DMS layout settings (`rightWidgets`, etc.).
 ## Notes
 
 - `melodyctl/` needs the **`melodyctl` CLI** on your `PATH`
-  (`uv tool install --python /usr/bin/python3 git+https://github.com/chiragverma11/melodyctl`;
+  (`uv tool install --python /usr/bin/python3 "git+https://github.com/chiragverma11/melodyctl@v1.4.0"`;
   a system Python is required because uv-managed Pythons lack Bluetooth sockets). The
   plugin auto-detects it, or you can point it at a script path in its settings.
+- **Minimum CLI version: 1.3.0** (`melodyctl device --json` feeds the model name in
+  the tile and popout; without it the plugin falls back to a generic label). The
+  plugin's version is its own — see [`melodyctl/CHANGELOG.md`](melodyctl/CHANGELOG.md).
 - The bar pill defaults to **compact** — just the earbuds icon, dimmed while the
   buds are unreachable. Click it for the popout (Left / Right / Case battery +
   controls); **right-click** it to toggle compact ⇄ **full** (icon + `L·R·C`), or
