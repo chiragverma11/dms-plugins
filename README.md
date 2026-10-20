@@ -24,7 +24,7 @@ Then add the widget to a bar via DMS layout settings (`rightWidgets`, etc.).
 ## Notes
 
 - `melodyctl/` needs the **`melodyctl` CLI** on your `PATH`
-  (`uv tool install --python /usr/bin/python3 "git+https://github.com/chiragverma11/melodyctl@v1.5.1"`;
+  (`uv tool install --python /usr/bin/python3 "git+https://github.com/chiragverma11/melodyctl@v1.5.2"`;
   a system Python is required because uv-managed Pythons lack Bluetooth sockets). The
   plugin auto-detects it, or you can point it at a script path in its settings.
 - **Preferred: run the daemon.** The earbuds allow one connection at a time and
@@ -41,7 +41,7 @@ Then add the widget to a bar via DMS layout settings (`rightWidgets`, etc.).
 - **Minimum CLI version: 1.3.0** (`melodyctl device --json` feeds the model name in
   the tile and popout; without it the plugin falls back to a generic label).
   Push display, live game-mode state and the whitelist-driven gesture editor use
-  **1.5.0**; the reconnect/stale-state fixes use **1.5.1**; with anything older
+  **1.5.0**; the reconnect/stale-state fixes use **1.5.2**; with anything older
   the widget just polls. The plugin's version is its own — see
   [`melodyctl/CHANGELOG.md`](melodyctl/CHANGELOG.md).
 - The bar pill defaults to **compact** — just the earbuds icon, dimmed while the

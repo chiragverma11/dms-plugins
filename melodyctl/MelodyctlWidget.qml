@@ -193,6 +193,11 @@ PluginComponent {
             root.gameKnown = true;
             root.gameOn = !!d.game.on;
             root.gameModeSent = "";
+        } else if (root.gameKnown) {
+            // The daemon no longer has a device-reported value (a served game
+            // command cleared it: the device does not echo those), so do not
+            // keep showing the previous push.
+            root.gameKnown = false;
         }
         if (previousSession === "waiting" && root.daemonWasConnected) {
             // The daemon rebuilt the link after a drop: say so, so a recovery
@@ -736,8 +741,10 @@ PluginComponent {
         });
     }
 
-    // `ack` optionally overrides the acknowledgement shown in the header line.
-    function runControl(args, ack) {
+    // `ack` optionally overrides the acknowledgement shown in the header line;
+    // `onDone(ok)` runs after the outcome is applied (callers that keep local
+    // optimistic state use it to settle on success or roll back on failure).
+    function runControl(args, ack, onDone) {
         root.runCli(args, res => {
             const out = (res.out || "").trim();
             const message = ack !== undefined ? ack : out;
@@ -747,10 +754,16 @@ PluginComponent {
             }
             if (res.code === 0) {
                 root.clearError();
+                if (onDone)
+                    onDone(true);
                 if (args[0] === "gesture-set")
                     root.loadGestures();   // the gesture table changed
             } else if (res.err !== "") {
                 root.setError(res.err);
+                if (onDone)
+                    onDone(false);
+            } else if (onDone) {
+                onDone(false);
             }
         });
     }
@@ -1506,8 +1519,23 @@ PluginComponent {
                                             onSelectionChanged: (index, selected) => {
                                                 if (!selected)
                                                     return;
-                                                root.gameModeSent = index === 0 ? "on" : "off";
-                                                root.runControl(["game", root.gameModeSent]);
+                                                const wanted = index === 0 ? "on" : "off";
+                                                // The click supersedes a value the device
+                                                // pushed before it (it does not echo a
+                                                // command with event 5 - only a gesture).
+                                                const wasKnown = root.gameKnown;
+                                                const wasOn = root.gameOn;
+                                                root.gameKnown = false;
+                                                root.gameModeSent = wanted;
+                                                root.runControl(["game", wanted], undefined, ok => {
+                                                    if (!ok && root.gameModeSent === wanted) {
+                                                        // Rejected: put the last reported
+                                                        // value back.
+                                                        root.gameKnown = wasKnown;
+                                                        root.gameOn = wasOn;
+                                                        root.gameModeSent = "";
+                                                    }
+                                                });
                                             }
                                         }
                                     }

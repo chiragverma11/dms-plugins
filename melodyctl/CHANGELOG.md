@@ -4,6 +4,17 @@ Notable changes to this plugin. Versions are the **plugin's own** and are
 independent of the `melodyctl` CLI's; the minimum CLI version is noted per
 release. This repo is a monorepo, so tags are prefixed `melodyctl-v<version>`.
 
+## [1.5.2] - 2026-10-20
+
+Requires `melodyctl` >= 1.5.2 for the game-mode fix; **1.3.0+ still works**.
+
+### Fixed
+- **Toggling game mode now sticks.** A value the device had pushed (event 5)
+  used to win over the switch after a change made from the widget, because the
+  buds only report the mode after a *gesture* and never echo a command. The
+  click now supersedes the old report immediately, the daemon clears the stale
+  value, and a rejected command rolls the switch back to what was reported.
+
 ## [1.5.1] - 2026-10-20
 
 Requires `melodyctl` >= 1.5.1 for the fixes below; **1.3.0+ still works** (the
