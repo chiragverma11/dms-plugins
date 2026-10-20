@@ -1,7 +1,7 @@
 # Melodyctl Buds
 
 Battery, game mode and touch-gesture controls for **HeyMelody-family earbuds**
-(OPPO Enco / OnePlus Buds / realme) in your DankBar. Driven by the
+(OPPO Enco / OnePlus Buds) in your DankBar. Driven by the
 [`melodyctl`](https://github.com/chiragverma11/melodyctl) CLI over the device's
 single OPOv1 RFCOMM link.
 
@@ -107,4 +107,4 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the plugin's own history.
 
 ## License
 
-MIT — see the repository [LICENSE](../LICENSE).
+MIT — see [LICENSE](LICENSE).
