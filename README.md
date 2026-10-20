@@ -24,7 +24,7 @@ Then add the widget to a bar via DMS layout settings (`rightWidgets`, etc.).
 ## Notes
 
 - `melodyctl/` needs the **`melodyctl` CLI** on your `PATH`
-  (`uv tool install --python /usr/bin/python3 "git+https://github.com/chiragverma11/melodyctl@v1.5.0"`;
+  (`uv tool install --python /usr/bin/python3 "git+https://github.com/chiragverma11/melodyctl@v1.5.1"`;
   a system Python is required because uv-managed Pythons lack Bluetooth sockets). The
   plugin auto-detects it, or you can point it at a script path in its settings.
 - **Preferred: run the daemon.** The earbuds allow one connection at a time and
@@ -34,13 +34,16 @@ Then add the widget to a bar via DMS layout settings (`rightWidgets`, etc.).
   holds the link and publishes it to `$XDG_RUNTIME_DIR/melodyctl/state.json`.
   The widget reads that file directly - no Bluetooth connection of its own, and
   battery, bud/lid state and game mode update the moment the buds push them.
-  Without a daemon the widget polls `melodyctl battery --json-full` on the
-  interval below and behaves exactly as it always has.
+  The daemon re-reads the battery when the link has been quiet for its `--poll`
+  interval (default 120 s), so the reading cannot drift. Without a daemon the
+  widget polls `melodyctl battery --json-full` on the interval below and behaves
+  exactly as it always has.
 - **Minimum CLI version: 1.3.0** (`melodyctl device --json` feeds the model name in
   the tile and popout; without it the plugin falls back to a generic label).
   Push display, live game-mode state and the whitelist-driven gesture editor use
-  **1.5.0**; with anything older the widget just polls. The plugin's version is
-  its own — see [`melodyctl/CHANGELOG.md`](melodyctl/CHANGELOG.md).
+  **1.5.0**; the reconnect/stale-state fixes use **1.5.1**; with anything older
+  the widget just polls. The plugin's version is its own — see
+  [`melodyctl/CHANGELOG.md`](melodyctl/CHANGELOG.md).
 - The bar pill defaults to **compact** — just the earbuds icon, dimmed while the
   buds are unreachable. Click it for the popout (Left / Right / Case battery +
   controls); **right-click** it to toggle compact ⇄ **full** (icon + `L·R·C`), or

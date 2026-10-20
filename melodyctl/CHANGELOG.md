@@ -4,6 +4,28 @@ Notable changes to this plugin. Versions are the **plugin's own** and are
 independent of the `melodyctl` CLI's; the minimum CLI version is noted per
 release. This repo is a monorepo, so tags are prefixed `melodyctl-v<version>`.
 
+## [1.5.1] - 2026-10-20
+
+Requires `melodyctl` >= 1.5.1 for the fixes below; **1.3.0+ still works** (the
+widget falls back to polling its own RFCOMM session).
+
+### Fixed
+- **No stale game mode after a reconnect.** The optimistic "last set here"
+  value is dropped as soon as the daemon's session ends, so after a lid
+  cycle the switch reads "Not reported by the buds yet" instead of claiming a
+  state the new session knows nothing about (the buds have no query for it).
+- **A dropped link is not an error card.** With a daemon, a link loss now
+  renders as the neutral grey info line "Earbuds disconnected" with the
+  daemon's own hint, not "melodyctl failed" plus direct-`watch` advice.
+- **The refresh button does something with a daemon.** It now asks the daemon
+  for one battery read (through the CLI socket, no second connection) instead
+  of re-reading an unchanged file; while the daemon is waiting it also makes
+  the daemon retry immediately.
+
+### Added
+- A short "Reconnected" line when the daemon comes back after a drop, so a
+  recovery is visible in the popout without reading the journal.
+
 ## [1.5.0] - 2026-10-19
 
 Requires `melodyctl` >= 1.5.0 for the push features below; **1.3.0+ still

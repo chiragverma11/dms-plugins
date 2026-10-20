@@ -3,7 +3,7 @@
     "name": "Melodyctl Buds",
     "description": "Battery, touch gestures and game mode for HeyMelody-family earbuds (verified on OPPO Enco Buds)",
     "category": "utilities",
-    "version": "1.5.0",
+    "version": "1.5.1",
     "author": "Chirag Verma",
     "license": "MIT",
     "icon": "earbuds",

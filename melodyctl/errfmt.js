@@ -14,6 +14,7 @@ var TITLES_BY_CODE = {
     no_adapter: "Bluetooth is off",
     timeout: "No response from the earbuds",
     no_bluetooth_support: "Bluetooth support missing",
+    disconnected: "Earbuds disconnected",
     error: "melodyctl failed"
 };
 
@@ -24,8 +25,13 @@ var HINTS_BY_CODE = {
     no_adapter: "No Bluetooth adapter found\u2014is Bluetooth enabled?",
     timeout: "No response from the earbuds (timed out).",
     no_bluetooth_support: "melodyctl needs a system Python with Bluetooth support.",
+    disconnected: "The earbuds idle, or go back in the case, and drop the link; it comes back on its own.",
     error: ""
 };
+
+// Codes that are not a failure of their own: another agent owns the link and is
+// retrying, so they render as an info line rather than a red error card.
+var TRANSIENT_CODES = {busy: true, disconnected: true};
 
 function emptyResult() {
     return {title: "", hint: "", detail: "", code: "", transient: false};
@@ -47,7 +53,7 @@ function humanize(text) {
                     hint: obj.error.hint || HINTS_BY_CODE[code] || "",
                     detail: obj.error.message || raw,
                     code: code,
-                    transient: code === "busy"
+                    transient: TRANSIENT_CODES[code] === true
                 };
             }
         } catch (e) {
@@ -74,10 +80,12 @@ function humanize(text) {
     // 3) pattern-match the common one-line failures
     function match(code) {
         return {title: TITLES_BY_CODE[code], hint: HINTS_BY_CODE[code],
-                detail: first, code: code, transient: code === "busy"};
+                detail: first, code: code, transient: TRANSIENT_CODES[code] === true};
     }
     if (/\(Errno 16\)|resource busy/i.test(raw))
         return match("busy");
+    if (/Connection reset by peer|peer closed the connection|Errno 104/i.test(raw))
+        return match("disconnected");
     if (/\(Errno 111\)|connection refused/i.test(raw))
         return match("refused");
     if (/\(Errno 11[23]\)|host is down|no route to host/i.test(raw))

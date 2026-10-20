@@ -78,6 +78,10 @@ PluginComponent {
     readonly property bool daemonLive: root.daemonFresh && root.daemonState.session === "connected"
     readonly property bool daemonWaiting: root.daemonFresh && root.daemonState.session === "waiting"
     property string daemonProduct: ""
+    // The `session` field last applied; a waiting -> connected change is a
+    // reconnect worth acknowledging in the popout.
+    property string daemonSession: ""
+    property bool daemonWasConnected: false
     // Bud/lid state (event 2) and the last game-mode push (event 5); both only
     // exist while a daemon is holding the link.
     property var budStatus: null
@@ -127,9 +131,11 @@ PluginComponent {
         root.daemonState = null;
         root.daemonTs = 0;
         root.daemonProduct = "";
+        root.daemonSession = "";
         root.budStatus = null;
         root.gameKnown = false;
         root.gameOn = false;
+        root.gameModeSent = "";
     }
 
     // Apply one state.json read. Everything in it is what the device pushed to
@@ -149,16 +155,21 @@ PluginComponent {
         root.daemonState = d;
         root.daemonTs = typeof d.ts === "number" ? d.ts * 1000 : 0;
         root.daemonProduct = typeof d.product === "string" ? d.product : "";
+        const previousSession = root.daemonSession;
+        root.daemonSession = typeof d.session === "string" ? d.session : "";
         if (typeof d.device === "string" && d.device !== "")
             root.deviceName = d.device;      // no `device --json` needed
         if (d.session !== "connected") {
             // Waiting: the daemon owns the link and is retrying. Its last
-            // numbers are not current, so never show them.
+            // numbers are not current, so never show them - and the same goes
+            // for a game mode we set in the session that just ended: after a
+            // reconnect only the device can say what it holds.
             root.connected = false;
             root.clearLevels();
             root.budStatus = null;
             root.gameKnown = false;
             root.gameOn = false;
+            root.gameModeSent = "";
             if (d.error)
                 root.setError(JSON.stringify({ error: d.error }));
             return;
@@ -183,6 +194,13 @@ PluginComponent {
             root.gameOn = !!d.game.on;
             root.gameModeSent = "";
         }
+        if (previousSession === "waiting" && root.daemonWasConnected) {
+            // The daemon rebuilt the link after a drop: say so, so a recovery
+            // is visible without reading the journal.
+            root.status = "Reconnected";
+            statusResetTimer.restart();
+        }
+        root.daemonWasConnected = true;
         root.clearError();
         root.loadGestureSlots();
     }
@@ -655,6 +673,18 @@ PluginComponent {
             stateView.reload();
             return;
         }
+        root.pollBattery();
+    }
+
+    // The manual read: ask for the battery now, through whoever owns the link.
+    // With a daemon running the CLI request goes over its socket (one device
+    // read, no second connection), and while the daemon is waiting the same
+    // request makes it try again immediately instead of waiting out its backoff.
+    function pollBattery() {
+        if (!root.cliAvailable) {
+            root.ensureCli();
+            return;
+        }
         root.batteryRefreshing = true;
         root.runCli(["battery", "--json-full"], res => {
             root.batteryRefreshing = false;
@@ -1063,7 +1093,10 @@ PluginComponent {
                     iconColor: root.batteryRefreshing ? Theme.primary : Theme.surfaceText
                     tooltipText: "Refresh"
                     onClicked: {
-                        root.refresh();
+                        // A real read, not just a file reload: with a daemon the
+                        // CLI asks it for one, so the button means the same
+                        // thing whether or not one is running.
+                        root.pollBattery();
                         root.loadGestures();
                     }
                 }
