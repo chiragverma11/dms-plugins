@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import Quickshell.Io
 import qs.Common
-import qs.Widgets
+import qs.DCommon.Widgets
 import qs.Modules.Plugins
 import "errfmt.js" as ErrFmt
 
@@ -210,7 +210,7 @@ PluginSettings {
         wrapMode: Text.WordWrap
     }
 
-    DankTextField {
+    DTextField {
         width: parent.width
         text: root.loadValue("command", root.loadValue("scriptPath", ""))
         placeholderText: "melodyctl   (or /path/to/melodyctl.py)"
@@ -227,7 +227,7 @@ PluginSettings {
         color: Theme.surfaceText
     }
 
-    DankTextField {
+    DTextField {
         width: parent.width
         text: root.loadValue("pollInterval", "120")
         placeholderText: "120"
@@ -253,7 +253,7 @@ PluginSettings {
         color: Theme.surfaceVariantText
     }
 
-    DankToggle {
+    DToggle {
         width: parent.width
         text: "Show battery numbers"
         description: "Compact (default) keeps just the earbuds icon. On adds L·R·C next to it. Right-clicking the pill toggles this too."

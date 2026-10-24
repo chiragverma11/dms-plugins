@@ -1,7 +1,7 @@
 # Melodyctl Buds
 
 Battery, game mode and touch-gesture controls for **HeyMelody-family earbuds**
-(OPPO Enco / OnePlus Buds) in your DankBar. Driven by the
+(OPPO Enco / OnePlus Buds) in your DMS bar. Driven by the
 [`melodyctl`](https://github.com/chiragverma11/melodyctl) CLI over the device's
 single OPOv1 RFCOMM link.
 
@@ -11,12 +11,13 @@ battery from other whitelist models but will not guess at their write commands.
 
 ## Install
 
-DMS loads plugins from `~/.config/DankMaterialShell/plugins/`. This plugin is
-not in the DMS registry, so link it in:
+DMS 2.0 (Dux Shell) loads plugins from `~/.config/dms/plugins/` — the old
+`~/.config/DankMaterialShell/plugins/` is a compatibility symlink on upgraded
+systems. This plugin is not in the registry, so link it in:
 
 ```bash
 git clone https://github.com/chiragverma11/dms-plugins
-ln -s "$PWD/dms-plugins/melodyctl" ~/.config/DankMaterialShell/plugins/melodyctl
+ln -s "$PWD/dms-plugins/melodyctl" ~/.config/dms/plugins/melodyctl
 dms ipc call plugins reload melodyctl
 ```
 
@@ -82,7 +83,11 @@ interval below and everything still works, just without push updates.
 
 ## Compatibility
 
-The plugin and the CLI version independently; this plugin is **1.5.2**.
+The plugin and the CLI version independently; this plugin is **1.6.0**.
+
+It requires **DMS 2.0 (Dux Shell) or newer** — `plugin.json` declares
+`requires_dms: ">=2.0.0"`, and it uses the 2.0 `qs.DCommon.Widgets` library.
+**Plugin 1.5.x is the last release for DMS 1.x.**
 
 | CLI version | What works |
 |---|---|

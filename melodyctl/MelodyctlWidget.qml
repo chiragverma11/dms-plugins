@@ -3,7 +3,7 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import qs.Common
-import qs.Widgets
+import qs.DCommon.Widgets
 import qs.Modules.Plugins
 import qs.Services
 import "errfmt.js" as ErrFmt
@@ -802,7 +802,7 @@ PluginComponent {
                 width: parent.width
                 height: Theme.iconSize + 8
 
-                DankIcon {
+                DIcon {
                     anchors.centerIn: parent
                     name: gauge.iconName
                     size: Theme.iconSize + 2
@@ -826,7 +826,7 @@ PluginComponent {
 
                 // Charging comes either way: from the daemon's push data, or
                 // from the CLI poll (battery --json-full).
-                DankIcon {
+                DIcon {
                     name: "bolt"
                     size: 12
                     visible: gauge.known && gauge.charging
@@ -941,7 +941,7 @@ PluginComponent {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Theme.spacingXS
 
-                DankIcon {
+                DIcon {
                     name: root.functionIcon(gRow.row ? gRow.row.function : -1)
                     size: 14
                     color: Theme.surfaceText
@@ -955,7 +955,7 @@ PluginComponent {
                     Layout.alignment: Qt.AlignVCenter
                 }
 
-                DankIcon {
+                DIcon {
                     visible: gRow.editable
                     name: "expand_more"
                     size: 14
@@ -1020,7 +1020,7 @@ PluginComponent {
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: Theme.spacingS
 
-                        DankIcon {
+                        DIcon {
                             name: root.functionIcon(optionRow.modelData)
                             size: 14
                             color: optionRow.current ? Theme.primary : Theme.surfaceText
@@ -1036,7 +1036,7 @@ PluginComponent {
                             Layout.fillWidth: true
                         }
 
-                        DankIcon {
+                        DIcon {
                             visible: optionRow.current
                             name: "check"
                             size: 14
@@ -1063,7 +1063,7 @@ PluginComponent {
         RowLayout {
             spacing: Theme.spacingXS
 
-            DankIcon {
+            DIcon {
                 name: "earbuds"
                 size: root.iconSize
                 color: root.pillIconColor
@@ -1082,7 +1082,7 @@ PluginComponent {
     }
 
     verticalBarPill: Component {
-        DankIcon {
+        DIcon {
             name: "earbuds"
             size: root.iconSize
             color: root.pillIconColor
@@ -1101,7 +1101,7 @@ PluginComponent {
             showCloseButton: true
 
             headerActions: Component {
-                DankActionButton {
+                DActionButton {
                     iconName: "refresh"
                     iconColor: root.batteryRefreshing ? Theme.primary : Theme.surfaceText
                     tooltipText: "Refresh"
@@ -1192,7 +1192,7 @@ PluginComponent {
                     elide: Text.ElideRight
                 }
 
-                DankFlickable {
+                DFlickable {
                     id: scroller
 
                     width: parent.width
@@ -1214,7 +1214,7 @@ PluginComponent {
                             visible: !root.cliChecked
                             spacing: Theme.spacingS
 
-                            DankSpinner {
+                            DSpinner {
                                 size: 16
                                 running: true
                                 color: Theme.surfaceVariantText
@@ -1253,7 +1253,7 @@ PluginComponent {
                                     width: parent.width
                                     spacing: Theme.spacingS
 
-                                    DankIcon {
+                                    DIcon {
                                         name: "info"
                                         size: Theme.iconSizeSmall
                                         color: Theme.warning
@@ -1329,7 +1329,7 @@ PluginComponent {
                                     width: parent.width
                                     spacing: Theme.spacingS
 
-                                    DankIcon {
+                                    DIcon {
                                         name: root.errorTransient ? "info" : "warning"
                                         size: Theme.iconSizeSmall
                                         color: root.errorTransient ? Theme.surfaceVariantText : Theme.error
@@ -1392,7 +1392,7 @@ PluginComponent {
                                         Layout.fillWidth: true
                                     }
 
-                                    DankSpinner {
+                                    DSpinner {
                                         size: 12
                                         running: root.batteryRefreshing
                                         visible: root.batteryRefreshing
@@ -1509,7 +1509,7 @@ PluginComponent {
                                             }
                                         }
 
-                                        DankButtonGroup {
+                                        DButtonGroup {
                                             Layout.alignment: Qt.AlignVCenter
                                             size: "small"
                                             selectionMode: "single"
@@ -1578,7 +1578,7 @@ PluginComponent {
                                     text: "Touch gestures"
                                 }
 
-                                DankIcon {
+                                DIcon {
                                     anchors.right: parent.right
                                     anchors.verticalCenter: parent.verticalCenter
                                     name: "expand_more"
@@ -1661,7 +1661,7 @@ PluginComponent {
                                                     width: parent.width
                                                     spacing: Theme.spacingXS
 
-                                                    DankIcon {
+                                                    DIcon {
                                                         name: modelData.icon
                                                         size: 14
                                                         color: Theme.surfaceVariantText

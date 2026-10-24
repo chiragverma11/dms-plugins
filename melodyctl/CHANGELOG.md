@@ -4,6 +4,20 @@ Notable changes to this plugin. Versions are the **plugin's own** and are
 independent of the `melodyctl` CLI's; the minimum CLI version is noted per
 release. This repo is a monorepo, so tags are prefixed `melodyctl-v<version>`.
 
+## [1.6.0] - 2026-10-24
+
+Requires **DMS 2.0 (Dux Shell) or newer**; 1.5.x is the last release for DMS
+1.x. `melodyctl` >= 1.3.0 still works (1.5.2+ recommended).
+
+### Changed
+- Migrated from the deprecated `qs.Widgets` `Dank*` types to
+  `qs.DCommon.Widgets` `D*` types (DMS 2.0). The compatibility shims emitted a
+  deprecation error per type on every load and will be removed in a future
+  release.
+- `plugin.json` declares `requires_dms: ">=2.0.0"`, so the plugin browser and
+  updater refuse to install it on an older shell instead of failing at import.
+- Install docs use the 2.0 config path, `~/.config/dms/plugins/`.
+
 ## [1.5.2] - 2026-10-20
 
 Requires `melodyctl` >= 1.5.2 for the game-mode fix; **1.3.0+ still works**.
